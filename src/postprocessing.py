@@ -9,7 +9,7 @@ import matplotlib.ticker
 import os
 from itertools import product
 
-#TODO: Outdated. Is (will be) replaced with "datareader" and "plotter"
+#TODO: Outdated. Is (will be) replaced with "datareader", "plotter" and "content_uniformity"
 
 @dataclass
 class PostProcessing:
