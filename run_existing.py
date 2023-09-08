@@ -1,4 +1,4 @@
-from runner import Runner, LAMMPSScript
+from src import Runner, LAMMPSScript
 import argparse
 from pathlib import Path
 

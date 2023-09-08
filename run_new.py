@@ -1,4 +1,4 @@
-from runner import Runner, LAMMPSScript
+from src import Runner, LAMMPSScript
 import argparse
 from pathlib import Path
 
@@ -6,7 +6,7 @@ def parser():
     """Parses arguments for a simulation where a new packing is created.
     """
     #Get list of available input tables
-    path_to_input_tables = Path('../../input_tables')
+    path_to_input_tables = Path('./input_tables')
     csv_tables = list(path_to_input_tables.glob('*.csv'))
 
     #Parse arguments

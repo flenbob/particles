@@ -2,13 +2,14 @@ import numpy as np
 from dataclasses import dataclass, field
 from scipy.spatial import cKDTree
 import h5py
-from numba import jit, prange
+from numba import jit
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import matplotlib.ticker
 import os
 from itertools import product
 
+#TODO: Outdated. Is (will be) replaced with "datareader" and "plotter"
 
 @dataclass
 class PostProcessing:

@@ -4,7 +4,7 @@ import h5py
 from dataclasses import dataclass
 from ovito.io import import_file
 from pathlib import Path
-from filename import FileName
+from .filename import FileName
 
 @dataclass
 class DataWriter:

@@ -1,10 +1,10 @@
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from enum import Enum
-from datawriter import DataWriter
-from packing import Packing
-import os, sys
-from filename import FileName
+from .datawriter import DataWriter
+from .packing import Packing
+from .filename import FileName
 
 class LAMMPSScript(Enum):
     """Names of selectable LAMMPS scripts"""
@@ -28,7 +28,7 @@ class Runner:
             screen (bool, optional): Suppresses LAMMPS output to screen and only write to log-file. Defaults to False.
         """
         #Input table path
-        table_path = Path(Path.cwd())/'../../input_tables'/table
+        table_path = Path(Path.cwd())/'input_tables'/table
         assert table_path.exists(), f"Path to input table {table_path} is not valid."
 
         #Set destination folder path
@@ -101,16 +101,16 @@ class Runner:
             case _:
                 raise Exception(f"Option '{script}' is not valid. Avaliable are: {[script.name for script in LAMMPSScript]}.")
             
-        self.script_path = Path(Path.cwd())/f'../../simulations/scripts/{script}'
+        self.script_path = Path(Path.cwd())/f'simulations/scripts/{script}'
     
     def _set_destiation_folder(self, folder_path) -> None:
         """Sets destination folder for simulation files"""
         #New folder generated at standard path
         if folder_path is None:
             ID = 0
-            while (Path.cwd()/f'../../simulations/data/{ID}').exists():
+            while (Path.cwd()/f'simulations/data/{ID}').exists():
                 ID += 1
-            folder_path = Path.cwd()/f'../../simulations/data/{ID}'
+            folder_path = Path.cwd()/f'simulations/data/{ID}'
             try:
                 folder_path.mkdir()
                 self.folder_path = folder_path

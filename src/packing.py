@@ -1,11 +1,10 @@
 import numpy as np
 from dataclasses import dataclass, field
 import math
-import itertools
 from itertools import chain
 from enum import Enum, auto
 from pathlib import Path
-from filename import FileName
+from .filename import FileName
 from ovito.io import import_file
 
 class Param(Enum):
@@ -238,9 +237,9 @@ class CoordinatesGenerator:
             x_l = [self.xcells_levels[k][s] for s in x_r]
             y_l = [self.ycells_levels[k][s] for s in y_r]
             z_l = [self.zcells_levels[k][s] for s in z_r]
-            x_lf = list(itertools.chain.from_iterable(x_l))
-            y_lf = list(itertools.chain.from_iterable(y_l))
-            z_lf = list(itertools.chain.from_iterable(z_l))
+            x_lf = list(chain.from_iterable(x_l))
+            y_lf = list(chain.from_iterable(y_l))
+            z_lf = list(chain.from_iterable(z_l))
 
             xyz = list(set(x_lf).intersection(y_lf, z_lf))
             if not xyz:
