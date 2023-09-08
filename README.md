@@ -19,7 +19,7 @@ This repository is a part of the Master Thesis conducted at Chalmers during spri
    - Compression phase only: ```compression``` 
    - Compression followed by adhesion phase: ```two_phase```
 4. Determine ```<# of MPI tasks>``` supported by your system
-5. To run simulation on a new packing ```run_new.py -h```, on an already existing packing file ```run_existing.py -h``` 
+5. To run simulation on a new packing: ```run_new.py -h```, on an already existing packing file: ```run_existing.py -h``` 
 6. Interact with the written HDF5 datafile in ```./simulations/data/ID``` using the Post-Processing object in ```./classes/postprocessing.py``` (TODO)
 
 ## Dependencies 
