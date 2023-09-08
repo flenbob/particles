@@ -1,0 +1,17 @@
+#Input files
+variable       in_data string "${data}/input.txt"              
+variable       out_global string "${data}/out_global.txt"      #Global file (Particle-wise properties)
+variable       out_local string "${data}/out_local.txt"        #Local file (Pair-wise properties)
+variable       out_scalar string "${data}/out_scalar.txt"      #Scalar file (System-wide properties)
+variable       in_restart string "${data}/adhesion_restart.dump" 
+
+#Read restart file
+read_restart ${in_restart}
+
+###############################################
+# Neighbor list building                      #
+############################################### 
+variable        skin equal 0.5
+neighbor        ${skin} multi
+neigh_modify    delay 0 every 1 check yes collection/interval ${CI}
+comm_modify     mode multi vel yes reduce/multi

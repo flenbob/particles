@@ -1,0 +1,216 @@
+###############################################
+# Simulation set-up
+###############################################
+atom_modify     map yes
+units           lj
+dimension       3
+atom_style      sphere
+read_data       ${input_data}
+
+change_box      all triclinic boundary p p p 
+set             type * density 1
+variable        N equal atoms
+
+###############################################
+# Simulation variables                        #
+###############################################
+variable        stepsize equal 25000 
+variable        NPH_run equal 8000000
+variable        noruns equal ceil(${NPH_run}/${stepsize})
+   
+#NPH variables
+variable        Pmin equal 1e-6                     # External pressure
+variable        Pdamp equal 10000                   # Relaxation rate
+variable        Ttarget equal 1e-5                  # Target temperature
+  
+# Pair style variables
+variable        E equal 5                           # Young's modulus
+variable        v equal 0                           # Poissons constant
+variable        COR equal 0.1                       # CoR Hertz
+variable        E_eff equal ${E}/(2*(1-${v}^2))     # Effective modulus
+variable        kn equal 4/3*${E_eff}               # Spring stiffness
+variable        g equal ${E}/2*(1e-2/3.094)^(3/2)   # Surface energy   
+
+#Hertz timestep 
+variable        T0 equal 40
+variable        T equal 20
+variable        MR equal PI^2/18
+variable        dHertz0 equal 2.865*(${MR}/(${E_eff}^2))^(1/5)/${T0}                # Initial phase timestep
+variable        dHertz equal 2.865*(${MR}/(2*(v_vmax+1e-8)*${E_eff}^2))^(1/5)/${T}  # Main phase timestep
+
+###############################################
+# Exit variables                              #
+############################################### 
+#Compression phase
+variable        C equal 0.01            # Cundall parameter threshold
+variable        PR equal 0.001          # Pressure ratio threshold
+
+#Adhesion phase
+variable        dZ_thresh equal 0.01    # Relative change in global coordination number 
+variable        0fr_thresh equal 0.01   # Fraction of zero-contact particles threshold
+variable        d4fr_thresh equal 0.01  # Change in fraction of rattler particles threshold
+
+###############################################
+# Neighbor list building                      #
+############################################### 
+variable        skin equal 0.5
+neighbor        ${skin} multi
+neigh_modify    delay 0 every 1 check yes collection/interval ${CI}
+comm_modify     mode multi vel yes reduce/multi
+
+###############################################
+# Compute variables of interest
+###############################################
+# Misc. variables
+variable        press_var equal press
+variable        dense equal density
+variable        stepv equal step
+
+# Cundall parameter 
+compute         forces all property/atom fx fy fz
+variable        FX atom c_forces[1]
+variable        FY atom c_forces[2]
+variable        FZ atom c_forces[3]
+variable        atom_force_sq atom v_FX^2+v_FY^2+v_FZ^2
+variable        atom_force_norm atom sqrt(v_atom_force_sq)
+compute         atom_force_abs all reduce sumabs v_atom_force_norm
+
+compute         contact_forces all pair/local force cutoff radius
+compute         contact_forces_total all reduce sumabs c_contact_forces
+variable        cundall equal c_atom_force_abs/(2*c_contact_forces_total+1e-6)          # Sum over both particles in interactions
+
+# Virial ratio
+compute         KE all ke 
+variable        ke equal c_KE
+variable        vratio equal (${N}*temp/vol)/(press+1e-12)
+
+# Number of contacts
+compute         contact all contact/atom
+compute         contactavg all reduce ave c_contact
+variable        avgContacts equal c_contactavg
+
+# Contact indices within force cutoff (ID for atom I and J and distance IJ)
+compute         indicies all property/local patom1 patom2 cutoff radius
+compute         distance all pair/local dist cutoff radius
+
+# Fraction of particles with zero contacts
+variable        0_bool atom (c_contact==0)
+compute         0_fraction all reduce sum v_0_bool
+variable        0fr equal c_0_fraction/${N}
+
+# Fraction of particles with less than four contacts
+variable        4_bool atom (c_contact<4)
+compute         4_fraction all reduce sum v_4_bool
+variable        4fr equal c_4_fraction/${N}
+
+# Change in fraction of particles with less than four contacts
+fix             4fr_vec all vector ${stepsize} v_4fr
+variable        ix equal ceil(step/${stepsize})
+variable        kx equal v_ix-1
+variable        d4fr equal abs(f_4fr_vec[v_ix]-f_4fr_vec[v_kx])/(f_4fr_vec[v_ix]+1e-6)
+
+# Largest velocity
+compute         vels all property/atom vx vy vx
+variable        VX atom c_vels[1]
+variable        VY atom c_vels[2]
+variable        VZ atom c_vels[3]
+variable        vel_sq atom v_VX^2+v_VY^2+v_VZ^2
+variable        vel_norm atom sqrt(v_vel_sq)
+compute         vel_max all reduce max v_vel_norm
+variable        vmax equal c_vel_max
+
+# Difference in density and mean coordination
+variable        phi equal density
+fix             phi_vec all vector ${stepsize} v_phi
+fix             contact_vec all vector ${stepsize} c_contactavg
+variable        ix equal ceil(step/${stepsize})
+variable        kx equal v_ix-1
+variable        dZ equal abs(f_contact_vec[v_ix]-f_contact_vec[v_kx])/(f_contact_vec[v_ix]+1e-6)
+variable        dphi equal abs(f_phi_vec[v_ix]-f_phi_vec[v_kx])
+
+###############################################
+# Dumpfiles
+###############################################
+# Particle locations, diameters and numbers of contacts dump
+dump            glob all custom ${stepsize} ${dump_global} id type x y z diameter c_contact
+#dump_modify     glob first yes
+
+# Pairwise contacts IJ and distance dump
+dump            loc all local ${stepsize} ${dump_local} c_indicies[1] c_indicies[2] c_distance
+#dump_modify     loc first yes
+
+# Scalar dump
+fix             scalars all print ${stepsize} "${stepv}, ${cundall}, ${press_var}, ${ke}, ${dense}, ${avgContacts}, ${vratio}" file ${dump_scalar} screen no title "step, cundall, press, KE, density, contact_avg, vratio"
+
+###############################################
+# NPH - Compression phase
+###############################################
+# Hertz contact model
+pair_style      granular
+pair_coeff      * * hertz ${kn} ${COR} tangential linear_nohistory 1 0 damping tsuji
+
+#Initial phase with small timestep dHertz0
+thermo_style    custom step press temp density c_contactavg v_cundall v_vratio v_dHertz v_vmax
+thermo          ${stepsize}
+fix             NPH all nph/sphere  x ${Pmin} ${Pmin} ${Pdamp} &
+                                    y ${Pmin} ${Pmin} ${Pdamp} &
+                                    z ${Pmin} ${Pmin} ${Pdamp} &
+                                    xy 0.0 0.0 ${Pdamp} &
+                                    yz 0.0 0.0 ${Pdamp} &
+                                    xz 0.0 0.0 ${Pdamp} &
+                                    nreset 1 pchain 0 ptemp ${Ttarget}
+
+timestep        ${dHertz0}
+run             100000
+
+#Phase with adaptive timestep dHertz
+thermo_style    custom step press temp density v_dZ v_dphi c_contactavg v_cundall v_vratio v_0fr v_dHertz v_vmax
+thermo          ${stepsize}
+variable        exit equal (v_cundall<${C})&&(v_vratio<${PR})
+
+variable        iter loop ${noruns}
+label           startiter 
+    timestep        ${dHertz}    
+    run             ${stepsize}
+    if (${exit}==1) then "jump ${self} stopiter"
+    next            iter
+    jump            ${self} startiter 
+label           stopiter
+
+unfix           NPH #End compression phase
+#Write restart file to allow starting at adhesion phase instead
+#write_restart   '../data/adhesion_restart.dump' 
+
+###############################################
+# NVE - Adhesion phase
+###############################################
+# JKR sticking velocity
+compute         radius all property/atom radius
+compute         Rmax all reduce max c_radius
+variable        RMAX equal c_Rmax
+thermo_style    custom step press temp density v_RMAX v_vmax v_0fr v_d4fr 
+run             0
+variable        vs equal 1.483*((2*${g}/${RMAX})^5/${E_eff}^2)^(1/6)
+
+# JKR contact model
+pair_style      granular
+pair_coeff      * * jkr ${E} ${COR} ${v} ${g} tangential linear_history 1e-8 0 0 damping tsuji
+
+# Set velocity of rattlers proportional to vstick
+variable        vhi equal 0.577
+thermo_style    custom step press temp density v_dZ c_contactavg v_vmax v_0fr v_d4fr
+thermo          ${stepsize}
+fix             NVE all nve/sphere 
+run             0
+group           rattlers variable 0_bool
+variable        vel0_x_new atom 10*v_VX/${vmax}*${vs}*${vhi}
+variable        vel0_y_new atom 10*v_VY/${vmax}*${vs}*${vhi}
+variable        vel0_z_new atom 10*v_VZ/${vmax}*${vs}*${vhi}
+velocity        rattlers set v_vel0_x_new v_vel0_y_new v_vel0_z_new 
+
+#Exit condition for adhesive phase
+variable        exitv equal (v_0fr<${0fr_thresh})&&(v_d4fr<${d4fr_thresh})&&(v_dZ<${dZ_thresh})
+fix             exitf all halt ${stepsize} v_exitv == 1 message yes error continue
+
+timestep        ${dHertz}
+run             100000000
