@@ -27,4 +27,4 @@ Simulations uses LAMMPS, see [Install LAMMPS](https://docs.lammps.org/Install.ht
 
 Python3 dependencies are found in ```./requirements.txt```.
 
-Packing can be visualized using OVITO, see [Install OVITO](https://www.ovito.org/manual/installation.html). Within the software, load ```./simulations/data/ID/out_global.txt``` for a given simulation ```ID```.
+Packing can be visualized using OVITO, see [Install OVITO](https://www.ovito.org/manual/installation.html). Within the software, load the global dumpfile, e.g. ```./simulations/data/ID/out_global.txt``` for a given simulation ```ID```.
