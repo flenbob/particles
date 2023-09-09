@@ -1,5 +1,6 @@
 from enum import Enum, auto
 
+
 class FrameKey(Enum):
     """Names of frame keys"""
     cell_matrix = auto()
@@ -20,7 +21,7 @@ class CommonKey(Enum):
     """Names of common keys"""
     particle_ids = auto()
     particle_types = auto()
-    particle_diameter = auto()
+    particle_diameters = auto()
     scalars = auto()
     polydispersity = auto()
 

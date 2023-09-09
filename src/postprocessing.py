@@ -1,13 +1,14 @@
-import numpy as np
-from dataclasses import dataclass, field
-from scipy.spatial import cKDTree
-import h5py
-from numba import jit
-import matplotlib.pyplot as plt
-import matplotlib.ticker as ticker
-import matplotlib.ticker
 import os
+from dataclasses import dataclass, field
 from itertools import product
+
+import h5py
+import matplotlib.pyplot as plt
+import matplotlib.ticker
+import matplotlib.ticker as ticker
+import numpy as np
+from numba import jit
+from scipy.spatial import cKDTree
 
 #TODO: Outdated. Is (will be) replaced with "datareader", "plotter" and "content_uniformity"
 

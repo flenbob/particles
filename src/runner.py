@@ -1,10 +1,12 @@
 import os
 from dataclasses import dataclass
-from pathlib import Path
 from enum import Enum
+from pathlib import Path
+
 from .datawriter import DataWriter
-from .packing import Packing
 from .filename import FileName
+from .packing import Packing
+
 
 class LAMMPSScript(Enum):
     """Names of selectable LAMMPS scripts"""

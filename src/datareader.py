@@ -1,8 +1,10 @@
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Optional
+
 import h5py
 import numpy as np
-from pathlib import Path
-from dataclasses import dataclass, field
-from typing import Optional
+
 
 @dataclass
 class DataReader:

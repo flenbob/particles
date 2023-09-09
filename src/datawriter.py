@@ -1,10 +1,16 @@
-import numpy as np
-import sys, traceback, os
-import h5py
+import os
+import sys
+import traceback
 from dataclasses import dataclass
-from ovito.io import import_file
 from pathlib import Path
+
+import h5py
+import numpy as np
+from ovito.io import import_file
+
 from .filename import FileName
+from .keyname import CommonKey, FrameKey
+
 
 @dataclass
 class DataWriter:
@@ -48,7 +54,7 @@ class DataWriter:
                     case 'y':
                         os.remove(self.data_path)
                         break
-                    case other:
+                    case _:
                         print('Invalid key. Use (y) or (n)')
                     
     def _write_global(self, global_path: Path) -> None:
@@ -64,16 +70,16 @@ class DataWriter:
                 diameters = data_global.particles['Diameter'][:]
                 particle_volume = np.pi/6*np.sum(diameters**3)
                 polydispersity = np.max(diameters)/np.min(diameters)
-                file.create_dataset('PD', data=polydispersity)
+                file.create_dataset(CommonKey.polydispersity, data=polydispersity)
                 attrs = np.array([data_global.particles['Particle Identifier'][:], 
                                 data_global.particles['Particle Type'][:],
                                 diameters]).T
                 
                 #Sort by Particle Identifier (ID) and write
                 attrs = attrs[attrs[:, 0].argsort(kind='stable')]
-                file.create_dataset('ID', data=attrs[:, 0])
-                file.create_dataset('type', data=attrs[:, 1])
-                file.create_dataset('diameter', data=attrs[:, 2])
+                file.create_dataset(CommonKey.particle_ids, data=attrs[:, 0])
+                file.create_dataset(CommonKey.particle_types, data=attrs[:, 1])
+                file.create_dataset(CommonKey.particle_diameters, data=attrs[:, 2])
 
                 #Frame dependent attributes
                 for frame in range(pipeline_global.source.num_frames):
@@ -85,8 +91,8 @@ class DataWriter:
                     no_nonrattlers = np.all(Z < 4)
                     Z_g = 0 if no_contacts else np.mean(Z)
                     Z_nr = 0 if no_nonrattlers else np.mean(Z[Z >= 4])
-                    file.create_dataset(f'{frame}/Z_g', data=float(Z_g))
-                    file.create_dataset(f'{frame}/Z_nr', data=float(Z_nr))
+                    file.create_dataset(f'{frame}/{FrameKey.Z_g}', data=float(Z_g))
+                    file.create_dataset(f'{frame}/{FrameKey.Z_nr}', data=float(Z_nr))
                                 
                     attrs = np.array([data_global.particles['Particle Identifier'][:],
                                     data_global.particles['Position'][:, 0],
@@ -97,18 +103,18 @@ class DataWriter:
 
                     #Sort by ID and write
                     attrs = attrs[attrs[:, 0].argsort(kind='stable')]
-                    file.create_dataset(f'{frame}/position', data=attrs[:, 1:4])
-                    file.create_dataset(f'{frame}/contacts', data=attrs[:, 4])
+                    file.create_dataset(f'{frame}/{FrameKey.particle_coordinates}', data=attrs[:, 1:4])
+                    file.create_dataset(f'{frame}/{FrameKey.particle_contacts}', data=attrs[:, 4])
 
                     #Cell attributes
                     cell_matrix = data_global.cell[:3, :3]
                     cell_origin = data_global.cell[:, -1]
                     cell_volume = data_global.cell.volume
                     cell_density = particle_volume/cell_volume
-                    file.create_dataset(f'{frame}/H', data=cell_matrix)
-                    file.create_dataset(f'{frame}/origin', data=cell_origin)
-                    file.create_dataset(f'{frame}/volume', data=cell_volume)
-                    file.create_dataset(f'{frame}/packing_fraction', data=cell_density)
+                    file.create_dataset(f'{frame}/{FrameKey.cell_matrix}', data=cell_matrix)
+                    file.create_dataset(f'{frame}/{FrameKey.cell_origin}', data=cell_origin)
+                    file.create_dataset(f'{frame}/{FrameKey.volume}', data=cell_volume)
+                    file.create_dataset(f'{frame}/{FrameKey.packing_fraction}', data=cell_density)
 
             print('Global file written to HDF5 file.')
         except Exception:
@@ -125,8 +131,8 @@ class DataWriter:
                 #Iterate through each frame
                 for frame in range(pipeline_local.source.num_frames):
                     data_local = pipeline_local.compute(frame)
-                    file.create_dataset(f'{frame}/distance', data=data_local.particles.bonds['Distance'][:])
-                    file.create_dataset(f'{frame}/contact_pairs', data=data_local.particles.bonds['Particle Identifiers'][:])
+                    file.create_dataset(f'{frame}/{FrameKey.distance_pairs}', data=data_local.particles.bonds['Distance'][:])
+                    file.create_dataset(f'{frame}/{FrameKey.contact_pairs}', data=data_local.particles.bonds['Particle Identifiers'][:])
 
             print('Local file written to HDF5 file.')
         except Exception:
@@ -142,7 +148,7 @@ class DataWriter:
             #Write scalars to HDF5
             with h5py.File(self.data_path, 'a') as file:
                 for label, scalar in zip(header, scalars.T):
-                    file.create_dataset(f'scalars/{label}', data=scalar)
+                    file.create_dataset(f'{CommonKey.scalars}/{label}', data=scalar)
 
             print('Scalar file written to HDF5 file.')
         except Exception:

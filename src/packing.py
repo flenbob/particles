@@ -1,11 +1,14 @@
-import numpy as np
-from dataclasses import dataclass, field
 import math
-from itertools import chain
+from dataclasses import dataclass, field
 from enum import Enum, auto
+from itertools import chain
 from pathlib import Path
-from .filename import FileName
+
+import numpy as np
 from ovito.io import import_file
+
+from .filename import FileName
+
 
 class Param(Enum):
     """CSV-table parameter names"""
@@ -54,17 +57,19 @@ class CoordinatesGenerator:
     box_width: float = field(default_factory=float, init=False)
 
     #Cell container in for each axis
-    xcells_levels: list[list[list]] = field(default_factory=list, repr=False, init=False)
-    ycells_levels: list[list[list]] = field(default_factory=list, repr=False, init=False)
-    zcells_levels: list[list[list]] = field(default_factory=list, repr=False, init=False)
+    CellGrid = list[list[list[int]]]
+    xcells_levels: CellGrid = field(default_factory=list, repr=False, init=False)
+    ycells_levels: CellGrid = field(default_factory=list, repr=False, init=False)
+    zcells_levels: CellGrid = field(default_factory=list, repr=False, init=False)
 
-    #Particle coordinate container for each axis
-    xcoords_levels: list[list] = field(default_factory=list, repr=False, init=False)
-    ycoords_levels: list[list] = field(default_factory=list, repr=False, init=False)
-    zcoords_levels: list[list] = field(default_factory=list, repr=False, init=False)
+    #Particle coordinate container for each axis and level
+    AxisLevel = list[list[float]]
+    xcoords_levels: AxisLevel = field(default_factory=list, repr=False, init=False)
+    ycoords_levels: AxisLevel = field(default_factory=list, repr=False, init=False)
+    zcoords_levels: AxisLevel = field(default_factory=list, repr=False, init=False)
 
     #Particle diameters and number of particles per level
-    diameters_levels: list[list[float]] = field(default_factory=list, repr=False, init=False)
+    diameters_levels: AxisLevel = field(default_factory=list, repr=False, init=False)
     N_levels: list[float] = field(default_factory=list, repr=False, init=False)
 
     #Number of cells and subcell width
@@ -122,7 +127,7 @@ class CoordinatesGenerator:
                     # Box ranges from [0, box_size]; sample uniformly in [d/2, bl-d/2] 
                     c = np.random.uniform(low = d/2, high = self.box_width-d/2, size = (3,))
 
-                    if(self._subdomain_cc(d, c, i) == False):
+                    if(self._subdomain_cc(d, c, i) is False):
                         break
                     # Find where to insert idx
                 self._insert_cell(c, i, j)

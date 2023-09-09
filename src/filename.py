@@ -1,5 +1,6 @@
 from enum import Enum
 
+
 class FileName(Enum):
     """Sets the name of various files"""
     INPUT_FILE = 'input.txt'

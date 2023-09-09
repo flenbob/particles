@@ -1,6 +1,8 @@
-from src import Runner, LAMMPSScript
 import argparse
 from pathlib import Path
+
+from src import LAMMPSScript, Runner
+
 
 def parser():
     """Parses arguments for a simulation where a new packing is created.
@@ -11,7 +13,7 @@ def parser():
 
     #Parse arguments
     parser = argparse.ArgumentParser()
-    parser.add_argument("script", help=f"Selected LAMMPS script type: {[script.name for script in LAMMPSScript]}",
+    parser.add_argument("script", help=f"Selected LAMMPS script type. Available are: {[script.name for script in LAMMPSScript]}",
                     type=str)
     parser.add_argument("table", help=f"Selected input CSV table name. Available examples are: {[csv_table.name for csv_table in csv_tables]}", type=str)
     parser.add_argument("n_tasks", help=f"Number of MPI-tasks to use in LAMMPS script", type=int)
