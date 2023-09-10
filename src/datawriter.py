@@ -70,16 +70,16 @@ class DataWriter:
                 diameters = data_global.particles['Diameter'][:]
                 particle_volume = np.pi/6*np.sum(diameters**3)
                 polydispersity = np.max(diameters)/np.min(diameters)
-                file.create_dataset(CommonKey.polydispersity, data=polydispersity)
+                file.create_dataset(str(CommonKey.polydispersity), data=polydispersity)
                 attrs = np.array([data_global.particles['Particle Identifier'][:], 
                                 data_global.particles['Particle Type'][:],
                                 diameters]).T
                 
                 #Sort by Particle Identifier (ID) and write
                 attrs = attrs[attrs[:, 0].argsort(kind='stable')]
-                file.create_dataset(CommonKey.particle_ids, data=attrs[:, 0])
-                file.create_dataset(CommonKey.particle_types, data=attrs[:, 1])
-                file.create_dataset(CommonKey.particle_diameters, data=attrs[:, 2])
+                file.create_dataset(str(CommonKey.particle_ids), data=attrs[:, 0])
+                file.create_dataset(str(CommonKey.particle_types), data=attrs[:, 1])
+                file.create_dataset(str(CommonKey.particle_diameters), data=attrs[:, 2])
 
                 #Frame dependent attributes
                 for frame in range(pipeline_global.source.num_frames):
@@ -107,12 +107,11 @@ class DataWriter:
                     file.create_dataset(f'{frame}/{FrameKey.particle_contacts}', data=attrs[:, 4])
 
                     #Cell attributes
-                    cell_matrix = data_global.cell[:3, :3]
+                    cell_matrix = data_global.cell[:3, :3] # 3x4 matrix [H, O] where H is 3x3 cell translation matrix and O is 3x1 cell origin
                     cell_origin = data_global.cell[:, -1]
                     cell_volume = data_global.cell.volume
                     cell_density = particle_volume/cell_volume
                     file.create_dataset(f'{frame}/{FrameKey.cell_matrix}', data=cell_matrix)
-                    file.create_dataset(f'{frame}/{FrameKey.cell_origin}', data=cell_origin)
                     file.create_dataset(f'{frame}/{FrameKey.volume}', data=cell_volume)
                     file.create_dataset(f'{frame}/{FrameKey.packing_fraction}', data=cell_density)
 

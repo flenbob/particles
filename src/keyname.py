@@ -1,10 +1,8 @@
 from enum import Enum, auto
 
-
 class FrameKey(Enum):
     """Names of frame keys"""
     cell_matrix = auto()
-    cell_origin = auto()
     Z_g = auto()
     Z_nr = auto()
     contact_pairs = auto()
