@@ -37,8 +37,8 @@ variable        dHertz0 equal 2.865*(${MR}/(${E_eff}^2))^(1/5)/${T0}            
 variable        dHertz equal 2.865*(${MR}/(2*(v_vmax+1e-8)*${E_eff}^2))^(1/5)/${T}  # Main phase timestep
 
 # Exit variables
-variable        C equal 0.1 #0.01        #Cundall parameter threshold
-variable        PR equal 0.1 #0.001      #Pressure ratio threshold
+variable        C equal 0.01        #Cundall parameter threshold
+variable        PR equal 0.001      #Pressure ratio threshold
 
 ###############################################
 # Neighbor list building                      #
@@ -153,5 +153,5 @@ label           stopiter
 unfix           NPH #End compression phase
 
 #Write restart file to allow starting at adhesion phase instead
-# variable        out_restart string "${data}/adhesion_restart.dump" 
-# write_restart   ${out_restart}
+variable        out_restart string "./simulations/data/restart/adhesion_restart.dump" 
+write_restart   ${out_restart}
