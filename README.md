@@ -26,6 +26,7 @@ This repository is a part of the Master Thesis conducted at Chalmers during spri
 Simulations uses LAMMPS, see [Install LAMMPS](https://docs.lammps.org/Install.html). The "most"-preset is sufficient for the simulation scripts. NOTE, the script assumes that the LAMMPS excecutable is a ```$PATH```-variable. E.g. add the following to ```.bashrc```:
 ```export PATH=/home/<USERNAME>/lammps/build:$PATH```
 
+Install OpenMPI to use multiple MPI-tasks: ```sudo apt install openmpi-bin```
 
 Python3 dependencies are found in ```./requirements.txt```.
 
