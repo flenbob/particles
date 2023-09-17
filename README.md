@@ -23,11 +23,15 @@ This repository is a part of the Master Thesis conducted at Chalmers during spri
 6. Interact with the written HDF5 datafile in ```./simulations/data/ID``` using the Post-Processing object in ```./classes/postprocessing.py``` (TODO)
 
 ## Dependencies 
-Simulations uses LAMMPS, see [Install LAMMPS](https://docs.lammps.org/Install.html). The "most"-preset is sufficient for the simulation scripts. NOTE, the script assumes that the LAMMPS excecutable is a ```$PATH```-variable. E.g. add the following to ```.bashrc```:
+
+### LAMMPS 
+Simulations use LAMMPS, see [Install LAMMPS](https://docs.lammps.org/Install.html). The "most"-preset is sufficient for the simulation scripts. 
+Ensure that OpenMPI has been installed before building LAMMPS: ```sudo apt-get install openmpi-bin libopenmpi-dev```.
+
+When running it is assumed that the LAMMPS excecutable is a ```$PATH```-variable. E.g. add the following to ```.bashrc```:
 ```export PATH=/home/<USERNAME>/lammps/build:$PATH```
 
-Install OpenMPI to use multiple MPI-tasks: ```sudo apt install openmpi-bin```
-
+### Python
 Python3 dependencies are found in ```./requirements.txt```.
 
 If using WSL2 and face issues with OVITO Python interface dependencies, try:
