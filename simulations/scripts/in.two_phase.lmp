@@ -6,7 +6,6 @@ units           lj
 dimension       3
 atom_style      sphere
 read_data       ${input_data}
-
 change_box      all triclinic boundary p p p 
 set             type * density 1
 variable        N equal atoms
@@ -40,15 +39,11 @@ variable        dHertz equal 2.865*(${MR}/(2*(v_vmax+1e-8)*${E_eff}^2))^(1/5)/${
 
 ###############################################
 # Exit variables                              #
-############################################### 
-#Compression phase
-variable        C equal 0.01            # Cundall parameter threshold
-variable        PR equal 0.001          # Pressure ratio threshold
-
-#Adhesion phase
-variable        dZ_thresh equal 0.01    # Relative change in global coordination number 
-variable        0fr_thresh equal 0.01   # Fraction of zero-contact particles threshold
-variable        d4fr_thresh equal 0.01  # Change in fraction of rattler particles threshold
+###############################################
+variable        C equal 0.01                        # Cundall parameter threshold
+variable        PR equal 0.001                      # Pressure ratio threshold
+variable        rel_change_thresh equal 0.005       # Maximum threshold for relative change of static particles over {stepsize} timesteps
+variable        static_fraction_thresh equal 0.5    # Minimum threshold for share of static particles (To ensure simulation does not terminate prematurely)
 
 ###############################################
 # Neighbor list building                      #
@@ -62,9 +57,9 @@ comm_modify     mode multi vel yes reduce/multi
 # Compute variables of interest
 ###############################################
 # Misc. variables
-variable        press_var equal press
-variable        dense equal density
+variable        pressv equal press
 variable        stepv equal step
+variable        phi equal density
 
 # Cundall parameter 
 compute         forces all property/atom fx fy fz
@@ -74,7 +69,6 @@ variable        FZ atom c_forces[3]
 variable        atom_force_sq atom v_FX^2+v_FY^2+v_FZ^2
 variable        atom_force_norm atom sqrt(v_atom_force_sq)
 compute         atom_force_abs all reduce sumabs v_atom_force_norm
-
 compute         contact_forces all pair/local force cutoff radius
 compute         contact_forces_total all reduce sumabs c_contact_forces
 variable        cundall equal c_atom_force_abs/(2*c_contact_forces_total+1e-6)          # Sum over both particles in interactions
@@ -93,21 +87,8 @@ variable        avgContacts equal c_contactavg
 compute         indicies all property/local patom1 patom2 cutoff radius
 compute         distance all pair/local dist cutoff radius
 
-# Fraction of particles with zero contacts
-variable        0_bool atom (c_contact==0)
-compute         0_fraction all reduce sum v_0_bool
-variable        0fr equal c_0_fraction/${N}
-
-# Fraction of particles with less than four contacts
-variable        4_bool atom (c_contact<4)
-compute         4_fraction all reduce sum v_4_bool
-variable        4fr equal c_4_fraction/${N}
-
-# Change in fraction of particles with less than four contacts
-fix             4fr_vec all vector ${stepsize} v_4fr
-variable        ix equal ceil(step/${stepsize})
-variable        kx equal v_ix-1
-variable        d4fr equal abs(f_4fr_vec[v_ix]-f_4fr_vec[v_kx])/(f_4fr_vec[v_ix]+1e-6)
+# Rattler particles
+variable        rattler_bool atom (c_contact<4)
 
 # Largest velocity
 compute         vels all property/atom vx vy vx
@@ -117,30 +98,35 @@ variable        VZ atom c_vels[3]
 variable        vel_sq atom v_VX^2+v_VY^2+v_VZ^2
 variable        vel_norm atom sqrt(v_vel_sq)
 compute         vel_max all reduce max v_vel_norm
+compute         vel_min all reduce min v_vel_norm
 variable        vmax equal c_vel_max
+variable        vmin equal c_vel_min
 
-# Difference in density and mean coordination
-variable        phi equal density
+#Vectors used during compression phase
 fix             phi_vec all vector ${stepsize} v_phi
 fix             contact_vec all vector ${stepsize} c_contactavg
+
+#Vector indexing variables
 variable        ix equal ceil(step/${stepsize})
-variable        kx equal v_ix-1
-variable        dZ equal abs(f_contact_vec[v_ix]-f_contact_vec[v_kx])/(f_contact_vec[v_ix]+1e-6)
-variable        dphi equal abs(f_phi_vec[v_ix]-f_phi_vec[v_kx])
+variable        jx equal v_ix-1
+
+#Difference in mean coordination
+variable        dZ equal abs(f_contact_vec[v_ix]-f_contact_vec[v_jx])/(f_contact_vec[v_ix]+1e-6)
+
+#Difference in density
+variable        dphi equal abs(f_phi_vec[v_ix]-f_phi_vec[v_jx])
 
 ###############################################
 # Dumpfiles
 ###############################################
 # Particle locations, diameters and numbers of contacts dump
-dump            glob all custom ${stepsize} ${dump_global} id type x y z diameter c_contact
-#dump_modify     glob first yes
+dump            glob all custom ${stepsize} ${dump_global} id type x y z diameter c_contact v_vel_norm
 
 # Pairwise contacts IJ and distance dump
 dump            loc all local ${stepsize} ${dump_local} c_indicies[1] c_indicies[2] c_distance
-#dump_modify     loc first yes
 
 # Scalar dump
-fix             scalars all print ${stepsize} "${stepv}, ${cundall}, ${press_var}, ${ke}, ${dense}, ${avgContacts}, ${vratio}" file ${dump_scalar} screen no title "step, cundall, press, KE, density, contact_avg, vratio"
+fix             scalars all print ${stepsize} "${stepv}, ${cundall}, ${pressv}, ${ke}, ${phi}, ${avgContacts}, ${vratio}" file ${dump_scalar} screen no title "step, cundall, press, KE, density, contact_avg, vratio"
 
 ###############################################
 # NPH - Compression phase
@@ -150,7 +136,7 @@ pair_style      granular
 pair_coeff      * * hertz ${kn} ${COR} tangential linear_nohistory 1 0 damping tsuji
 
 #Initial phase with small timestep dHertz0
-thermo_style    custom step press temp density c_contactavg v_cundall v_vratio v_dHertz v_vmax
+thermo_style    custom step press temp density c_contactavg v_cundall v_vratio v_dHertz v_vmin v_vmax
 thermo          ${stepsize}
 fix             NPH all nph/sphere  x ${Pmin} ${Pmin} ${Pdamp} &
                                     y ${Pmin} ${Pmin} ${Pdamp} &
@@ -159,58 +145,105 @@ fix             NPH all nph/sphere  x ${Pmin} ${Pmin} ${Pdamp} &
                                     yz 0.0 0.0 ${Pdamp} &
                                     xz 0.0 0.0 ${Pdamp} &
                                     nreset 1 pchain 0 ptemp ${Ttarget}
-
 timestep        ${dHertz0}
 run             100000
 
 #Phase with adaptive timestep dHertz
-thermo_style    custom step press temp density v_dZ v_dphi c_contactavg v_cundall v_vratio v_0fr v_dHertz v_vmax
+thermo_style    custom step press temp density v_dZ v_dphi c_contactavg v_cundall v_vratio v_dHertz v_vmax v_vmin
 thermo          ${stepsize}
-variable        exit equal (v_cundall<${C})&&(v_vratio<${PR})
+variable        exit_nph equal (v_cundall<${C})&&(v_vratio<${PR})
 
-variable        iter loop ${noruns}
-label           startiter 
+#For every stepsize:
+variable        iter_nph loop ${noruns}
+label           startiter_nph 
+    # Update timestep based on current maximum velocity of all particles. Terminate if exit conditions are satisfied.
     timestep        ${dHertz}    
     run             ${stepsize}
-    if (${exit}==1) then "jump ${self} stopiter"
-    next            iter
-    jump            ${self} startiter 
-label           stopiter
-
+    if (${exit_nph}==1) then "jump ${self} stopiter_nph"
+    next            iter_nph
+    jump            ${self} startiter_nph
+label           stopiter_nph
 unfix           NPH #End compression phase
-#Write restart file to allow starting at adhesion phase instead
-#write_restart   '../data/adhesion_restart.dump' 
 
 ###############################################
 # NVE - Adhesion phase
 ###############################################
-# JKR sticking velocity
+#Constant JKR timestep set by last dHertz. Adaptive timestep yields unexpected behavior with LAMMPS
+fix             NVE all nve/sphere
+timestep        ${dHertz}
+
+#Compute sticking velocity
 compute         radius all property/atom radius
 compute         Rmax all reduce max c_radius
 variable        RMAX equal c_Rmax
-thermo_style    custom step press temp density v_RMAX v_vmax v_0fr v_d4fr 
+thermo_style    custom step press temp density v_RMAX v_vmax v_vmin
+thermo          ${stepsize}
 run             0
 variable        vs equal 1.483*((2*${g}/${RMAX})^5/${E_eff}^2)^(1/6)
+variable        vhi equal 0.577
 
-# JKR contact model
+#JKR contact model
 pair_style      granular
 pair_coeff      * * jkr ${E} ${COR} ${v} ${g} tangential linear_history 1e-8 0 0 damping tsuji
 
-# Set velocity of rattlers proportional to vstick
-variable        vhi equal 0.577
-thermo_style    custom step press temp density v_dZ c_contactavg v_vmax v_0fr v_d4fr
-thermo          ${stepsize}
-fix             NVE all nve/sphere 
-run             0
-group           rattlers variable 0_bool
+# Set velocity of all rattler particles proportional to sticking velocity
+group           rattlers variable rattler_bool
 variable        vel0_x_new atom 10*v_VX/${vmax}*${vs}*${vhi}
 variable        vel0_y_new atom 10*v_VY/${vmax}*${vs}*${vhi}
 variable        vel0_z_new atom 10*v_VZ/${vmax}*${vs}*${vhi}
-velocity        rattlers set v_vel0_x_new v_vel0_y_new v_vel0_z_new 
+velocity        all set v_vel0_x_new v_vel0_y_new v_vel0_z_new
+run             0
 
-#Exit condition for adhesive phase
-variable        exitv equal (v_0fr<${0fr_thresh})&&(v_d4fr<${d4fr_thresh})&&(v_dZ<${dZ_thresh})
-fix             exitf all halt ${stepsize} v_exitv == 1 message yes error continue
+#Vector indexing variables
+variable        curr_step equal ceil(step/${stepsize})
+print           ${curr_step}
+variable        kx equal ceil(step/${stepsize})-${curr_step}+1
+variable        bool_first_kx equal (v_kx!=1)
+variable        lx equal v_kx-v_bool_first_kx
 
-timestep        ${dHertz}
-run             100000000
+#Group of static and moving particles
+variable        vel_thresh equal 1.05*${vmin}               #105% of minimum velocity when adhesion phase is initialized. Is constant throughout the phase. 
+variable        static_bool atom v_vel_norm<=${vel_thresh}
+compute         nc_static all reduce sum v_static_bool
+variable        n_static equal c_nc_static
+fix             n_static_vec all vector ${stepsize} v_n_static
+group           static variable static_bool
+group           moving subtract all static
+
+#Relative change in fraction of static and moving particles
+variable        rel_change equal (1-v_bool_first_kx)+(f_n_static_vec[v_kx]-f_n_static_vec[v_lx])/(f_n_static_vec[v_kx]+1e-6)
+
+#Exit condition for adhesive phase: 
+# - Relative change in static particles is low enough (0.5%) over {stepsize} steps
+# - Share of static particles is at least 50% 
+variable        n_static_fraction equal v_n_static/${N}
+variable        exit_nve equal (v_rel_change)<${rel_change_thresh}&&v_n_static_fraction>${static_fraction_thresh}
+
+#Screen output
+thermo_style    custom step press temp v_rel_change v_n_static_fraction v_vmin v_vmax
+thermo          ${stepsize}
+
+#For every stepsize:
+variable        iter_nve loop ${noruns}
+label           startiter_nve
+    #Update groups of moving and static particles. For static particles: 
+    # - Exclude from neighbor list
+    # - Do not perform time integration (NVE)
+    unfix           NVE
+    group           static variable static_bool
+    group           moving subtract all static
+    fix             NVE moving nve/sphere
+    neigh_modify    delay 0 every 1 check yes exclude group static static collection/interval ${CI}
+
+    #Iterate dynamics for stepsize timesteps and stop if exit condition is satisfied
+    run             ${stepsize}
+    if (${exit_nve}==1) then "jump ${self} stopiter_nve"
+    next            iter_nve 
+    jump            ${self} startiter_nve 
+label           stopiter_nve
+
+# Reform contacts by including previously excluded particles to neighbor-list
+unfix           NVE
+fix             NVE all nve/sphere
+neigh_modify    delay 0 every 1 check yes exclude none collection/interval ${CI}
+run             ${stepsize}
