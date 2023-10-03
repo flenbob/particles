@@ -58,23 +58,23 @@ class CoordinatesGenerator:
 
     #Cell container in for each axis
     CellGrid = list[list[list[int]]]
-    xcells_levels: CellGrid = field(default_factory=list, repr=False, init=False)
-    ycells_levels: CellGrid = field(default_factory=list, repr=False, init=False)
-    zcells_levels: CellGrid = field(default_factory=list, repr=False, init=False)
+    xcells_levels: CellGrid = field(repr=False, init=False)
+    ycells_levels: CellGrid = field(repr=False, init=False)
+    zcells_levels: CellGrid = field(repr=False, init=False)
 
     #Particle coordinate container for each axis and level
     AxisLevel = list[list[float]]
-    xcoords_levels: AxisLevel = field(default_factory=list, repr=False, init=False)
-    ycoords_levels: AxisLevel = field(default_factory=list, repr=False, init=False)
-    zcoords_levels: AxisLevel = field(default_factory=list, repr=False, init=False)
+    xcoords_levels: AxisLevel = field(repr=False, init=False)
+    ycoords_levels: AxisLevel = field(repr=False, init=False)
+    zcoords_levels: AxisLevel = field(repr=False, init=False)
 
     #Particle diameters and number of particles per level
-    diameters_levels: AxisLevel = field(default_factory=list, repr=False, init=False)
-    N_levels: list[float] = field(default_factory=list, repr=False, init=False)
+    diameters_levels: AxisLevel = field(repr=False, init=False)
+    N_levels: list[float] = field(repr=False, init=False)
 
     #Number of cells and subcell width
-    N_cells: list[int] = field(default_factory=list, repr=False, init=False)
-    L_cells: float = field(default_factory=float, repr=False, init=False)
+    N_cells: list[int] = field(repr=False, init=False)
+    L_cells: float = field(repr=False, init=False)
 
     def __post_init__(self):
         """Initializes class variables keeping track of particles by level, etc."""

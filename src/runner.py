@@ -2,6 +2,7 @@ import os
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+import numpy as np
 
 from .datawriter import DataWriter
 from .filename import FileName
@@ -54,29 +55,29 @@ class Runner:
         #Convert LAMMPS dumpfiles to HDF5 file
         DataWriter(self.folder_path).write_hdf5()
 
-    def run_existing(self, script: str, packing_path: Path, n_tasks: int, folder_path: Path = None, screen: bool = False) -> None:
+    def run_existing(self, script: str, packing_path: Path, n_tasks: int, screen: bool = False) -> None:
         """Runs a complete simulation on existing LAMMPS formatted packing file
 
         Args:
             script (str): String identifier for simulation type
             packing_path (Path): Path identifier to LAMMPS packing file
             n_tasks (int): Number of MPI-tasks to use in simulation
-            folder_path (Path, optional): Path identifier to write LAMMPS files to. If not provided, it is given its own folder in ./simulations/data/ID. Defaults to None.
             screen (bool, optional): Shows LAMMPS output to screen and only write to log-file. Defaults to False.
         """
 
         assert packing_path.exists(), f'Cannot find packing in {packing_path}'
 
         #Set destination folder to same path as packing
-        self.folder_path = folder_path
+        self.folder_path = packing_path
 
         #Set simulation script type
-        self._set_script(script) 
+        self._set_script(script)
 
         #Load packing to generate collection intervals
         packing = Packing()
-        packing.load_packing(packing_path)
+        packing.load_packing(packing_path/FileName.INPUT_FILE.value)
         collection_intervals = [len(packing.collection_intervals)] + packing.collection_intervals
+        collection_intervals[-1] += 1e-3 #Ensure last interval contains largest particle
         collection_intervals = " ".join(str(item) for item in collection_intervals)
 
         #Initialize LAMMPS simulation

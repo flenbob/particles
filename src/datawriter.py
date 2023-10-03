@@ -11,7 +11,6 @@ from ovito.io import import_file
 from .filename import FileName
 from .keyname import CommonKey, FrameKey
 
-
 @dataclass
 class DataWriter:
     """Handles reading of LAMMPS dumpfiles and writing them to a structured HDF5 file"""
@@ -42,7 +41,8 @@ class DataWriter:
 
     def _set_data_path(self) -> None:
         """Sets the data path"""
-        self.data_path = self.folder_path/FileName.DATA_FILE.value
+        if self.data_path is None:
+            self.data_path = self.folder_path/FileName.DATA_FILE.value
         try:
             assert not self.data_path.exists()
         except AssertionError:
@@ -107,8 +107,7 @@ class DataWriter:
                     file.create_dataset(f'{frame}/{FrameKey.particle_contacts}', data=attrs[:, 4])
 
                     #Cell attributes
-                    cell_matrix = data_global.cell[:3, :3] # 3x4 matrix [H, O] where H is 3x3 cell translation matrix and O is 3x1 cell origin
-                    cell_origin = data_global.cell[:, -1]
+                    cell_matrix = data_global.cell[:] # 3x4 matrix [H, O] where H is 3x3 cell translation matrix and O is 3x1 cell origin
                     cell_volume = data_global.cell.volume
                     cell_density = particle_volume/cell_volume
                     file.create_dataset(f'{frame}/{FrameKey.cell_matrix}', data=cell_matrix)
