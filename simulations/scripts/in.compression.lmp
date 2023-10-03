@@ -142,16 +142,12 @@ thermo          ${stepsize}
 variable        exit equal (v_cundall<${C})&&(v_vratio<${PR})
 variable        iter loop ${noruns}
 label           startiter   
-timestep        ${dHertz}    
-run             ${stepsize}
-if (${exit}==1) then "jump ${self} stopiter" #"jump in.compression.lmp coh" 
+    timestep        ${dHertz}    
+    run             ${stepsize}
+    if (${exit}==1) then "jump ${self} stopiter"
 
-next            iter
-jump            ${self} startiter #in.compression.lmp comp 
+    next            iter
+    jump            ${self} startiter
 label           stopiter
 
 unfix           NPH #End compression phase
-
-#Write restart file to allow starting at adhesion phase instead
-variable        out_restart string "./simulations/data/restart/adhesion_restart.dump" 
-write_restart   ${out_restart}
