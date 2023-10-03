@@ -23,8 +23,18 @@ This repository is a part of the Master Thesis conducted at Chalmers during spri
 6. Interact with the written HDF5 datafile in ```./simulations/data/ID``` using the Post-Processing object in ```./classes/postprocessing.py``` (TODO)
 
 ## Dependencies 
-Simulations uses LAMMPS, see [Install LAMMPS](https://docs.lammps.org/Install.html). Note, the simulation script assumes that the LAMMPS excecutable is a ```$PATH```-variable.
 
+### LAMMPS 
+Simulations use LAMMPS, see [Install LAMMPS](https://docs.lammps.org/Install.html). The "most"-preset is sufficient for the simulation scripts. 
+Ensure that OpenMPI has been installed before building LAMMPS: ```sudo apt-get install openmpi-bin libopenmpi-dev```.
+
+When running it is assumed that the LAMMPS excecutable is a ```$PATH```-variable. E.g. add the following to ```.bashrc```:
+```export PATH=/home/<USERNAME>/lammps/build:$PATH```
+
+### Python
 Python3 dependencies are found in ```./requirements.txt```.
+
+If using WSL2 and face issues with OVITO Python interface dependencies, try:
+```sudo apt-get install libgl-dev libglfw3-dev libxkbcommon-x11-0```
 
 Packing can be visualized using OVITO, see [Install OVITO](https://www.ovito.org/manual/installation.html). Within the software, load the global dumpfile, e.g. ```./simulations/data/ID/out_global.txt``` for a given simulation ```ID```.
