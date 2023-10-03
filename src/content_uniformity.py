@@ -1,144 +1,401 @@
 from dataclasses import dataclass, field
-import numpy as np
+import math 
+from multiprocessing import Pool
 from itertools import product
-from numba import jit
+
+import numpy as np
+from scipy.optimize import minimize
 from scipy.spatial import cKDTree
-from src import Particles
-from enum import Enum, auto
 
+class COVEstimator:
+    """Allows to calculate the COV of mass / volume fractions given sample mass / volume"""
 
-class Attribute(Enum):
-    """Attribute names for Coefficient of Variation"""
-    mass_fraction = auto()
-    volume_fraction = auto()
-    concentration = auto()
+    def __init__(self, K: int, Npred: int):
+        self.K = K
+        self.prop = 0.01
+        self.Npred = Npred
+        self.h: float
+
+        # Data after fitting
+        self.CV_mean: np.ndarray
+        self.CV_std: np.ndarray
+        self.X0: np.ndarray
+
+    def fit(self, X: np.ndarray, Y: np.ndarray) -> tuple[float, float]:
+        # Get available Cv prediction range
+        Xmax = np.min(X[:,-1 , :])
+        Xmin = np.max(X[:,0 , :])
+        X0 = np.linspace(Xmin, Xmax, self.Npred)
+        self.X0 = X0
+
+        # Set bandwidth from the average distance between data points
+        delta = self._avg_delta(X)
+        self.h = self.K*delta/(np.sqrt(-8*np.log(self.prop)))
+        print(f"Bandwidth set : {self.h}")
+        tau_estimate = self._nw_estimator_block(X, Y)
+
+        # Std and mean across the FCC structure where VTOT is non-zero - i.e there are nothing sampled yet
+        S = np.std(tau_estimate, axis = 2, ddof = 1)
+        M = np.mean(tau_estimate, axis = 2)
+        CV_raw = S/M
+
+        # Calculate the mean and std of the CV across shifts
+        CV_mean = np.nanmean(CV_raw, axis = 0)
+        CV_std = np.nanstd(CV_raw, axis = 0, ddof = 1)
+        
+        #Set class parameters
+        self.CV_mean = CV_mean
+        self.CV_std = CV_std
+
+        return CV_mean, CV_std
+
+    def _avg_delta(self, X: np.ndarray) -> float:
+        """Calculate the average step in X for the data
+
+        Args:
+            X (np.ndarray): Array containing data
+
+        Returns:
+            float: Avergae step
+        """
+
+        # Shifts, Shellradii, Centers
+        I, J, K = np.shape(X)
+
+        deltas = []
+        for i in range(I):
+            # Across shifts
+            for k in range(K):
+                # Across centers
+                for j in range(1, J):
+                    delta = X[i, j, k] - X[i, j-1, k]
+
+                deltas.append(delta)
+        deltas = np.array(deltas)
+        deltas_mean = np.mean(deltas)
+        return deltas_mean
+     
+    def _nw_inner(self, X: np.ndarray, Y: np.ndarray) -> np.ndarray:
+        """Nadaraya-Watson inner function"""
+        # I is no Radii, J is components
+        I, J = np.shape(Y)
+        N = np.shape(self.X0)[0]
+        MX = np.zeros((N, J), dtype = float)
+        D = 1/(self.h*math.sqrt(2*math.pi))
+        for n in range(N):
+            # Over prediction points
+            x0 = self.X0[n]
+            K = 1/(2*self.h**2)*(X-x0)**2
+            Kh = D*np.exp(-K)
+            Sx = np.sum(Kh)
+            if Sx == 0:
+                # All weights are zero: Too far from any training data --> set NaN - ignored in calculation later
+                MX[n, :] = np.nan
+                continue
+            
+            for j in range(J):
+                # Over components
+                Khy = np.multiply(Kh, Y[: , j])
+                Sy = np.sum(Khy)
+                mx = Sy/Sx
+                MX[n, j] = mx
+            # Fractions should sum to one
+            MX[n, :] = MX[n, :]/np.sum(MX[n, :])
+        return MX
+
+    def _nw_estimator_block(self, X: np.ndarray, Y: np.ndarray) -> np.ndarray:
+        """Nadaraya-Watson estimator over X0 for different Shifts, Centers and Components"""
+        # Order MXof X
+        # Shifts, Shellradii, Centers, Components
+        I, J, K, L = Y.shape
+        N = self.X0.shape[0]
+
+        tau_estimate = np.zeros((I, N, K, L), dtype = float)
+        with Pool(16) as pool:
+            for i in range(I):
+                # For each shift
+                CHUNKS = [(X[i, :, k], Y[i, :, k, :]) for k in range(K)]
+                TAU = pool.starmap(self._nw_inner, CHUNKS)
+                for k in range(K):
+                    tau_estimate[i, :, k, :] = TAU[k]
+        return tau_estimate
+
+class ABCurve:
+    def __init__(self):
+        # Parameters used for the curve fitting
+        self.a: float
+        self.b: float
+        self.c: float
+        self.d: float
+    
+    def predict(self, x: np.ndarray) -> np.ndarray:
+        return self.a/x**(self.b + self.c*np.exp(-self.d*x))
+    
+    def fit(self, X: np.ndarray, Y: np.ndarray, SY, verbose: bool=False) -> None:
+        # Generic fit function
+        def _func_(x, p0):
+            a, b, c, d = p0[0], p0[1], p0[2], p0[3]
+            fit_func = a/x**(b + c*np.exp(-d*x))
+            return fit_func
+
+        def _loss(p0):
+            # Work with the logarithm
+            residuals = (Y - _func_(X, p0))**2
+            weights = X**3/SY
+            loss = np.sum(np.multiply(residuals, weights))
+            return loss
+
+        # Curve fitting
+        p0 = [1e-2, 1/2, 0, 0]
+        res = minimize(_loss, x0 = p0, method='Nelder-Mead', tol = 1e-6, options = {'maxiter': 20000})
+        params = res.x
+        self.a, self.b, self.c, self.d = params[0], params[1], params[2], params[3]
+
+        if verbose:
+            print(res.message)
 
 @dataclass
 class Stange:
-    particles: Particles
-    
-    def _calculate_properties(self, attribute: Attribute, comp_densities: list = None):
-        comp_ids = [comp_id for comp_id in range(1, np.max(self.particles.types_ids))]
+    """Stange COV calculation given input PSD and total mass/volume"""
+    diameters: np.ndarray
+    types: np.ndarray
+    type_densities: list[float] = field(default_factory=list)
 
-        #Component-wise diameters
-        comps_particles_diameters = []
+    #Set by post init
+    types_id: list[int] = field(default_factory=list, init=False, repr=False)
+    d_types: list[np.ndarray] = field(default_factory=list, init=False, repr=False)
+    D63: np.ndarray = field(init=False, repr=False)
 
-        #Component-wise attribute
-        comps_particles_attribute = []
-        comps_attribute_std = []
-        comps_attribute_mean = []
-        comps_attribute = []
+    def __post_init__(self):
+        #Number of types
+        N_types = int(self.types.max())
+        self.types_id = list(range(N_types))
+        print(N_types, self.types_id)
 
-        #Component-wise concentration properties
-        for comp_id in comp_ids:
-            diameters = self.particles.diameters[self.particles.type_ids == comp_id]
-            comps_particles_diameters.append(diameters)
+        #Diameters by type
+        self.d_types = [self.diameters[self.types == i+1] for i in self.types_id]
 
-            if attribute == Attribute.mass_fraction:
-                particles_attribute = [np.pi/6*diam**3 for diam in diameters]
-            elif attribute == (Attribute.volume_fraction or Attribute.concentration):
-                particles_attribute = [np.pi/6*diam**3 for diam in diameters]
+        #Calculate D63 moment ratio
+        self.D63 = np.array([(self.d_types[i]**6).sum()/(self.d_types[i]**3).sum() for i in self.types_id])
 
+    def calculate_by_volume(self, V_particles: np.ndarray) -> np.ndarray:
+        """Calculates Stange COV with respect to volume fractions"""
+        #Calculate typewise volume fractions tau
+        V_types = np.array([(self.d_types[i]**3).sum() for i in self.types_id])
+        V_tot = V_types.sum()
+        tau = V_types/V_tot
 
-            else:
-                raise(f'Provided attribute {attribute} is not valid. Available are: ')
-            
-            comps_particles_attribute.append(particles_attribute)
+        #Typewise COV for each total Vume input V
+        cov = np.zeros((len(self.types_id), V_particles.shape[0]), dtype=float)
+        for i in self.types_id:
+            cov_temp = (1-tau[i])**2*self.D63[i]
+            for j in self.types_id:
+                if j != i:
+                    cov_temp += tau[j]*self.D63[j]
+            cov[i, :] = np.sqrt(np.pi*cov_temp/(6*V_particles))
+        return cov
 
-            attribute_std = np.std(particles_attribute)
-            comps_attribute_std.append(attribute_std)
+    def calculate_by_mass(self, G_particles: np.ndarray) -> float:
+        """Calculates Stange COV with respect to M fractions"""
+        #Check that mass densities are provided
+        assert len(self.type_densities) == len(self.types_id), f'M densities {self.type_densities} do not correspond to the number of types {self.types_id}.'
+        assert self.type_densities.all() > 0, 'M densities must be positive.'
 
-            attribute_mean = np.mean(particles_attribute)
-            comps_attribute_mean.append(attribute_mean)
+        #Calculate typewise mass fractions tau
+        M_types = np.array([self.type_densities[i]*(self.d_types[i]**3).sum() for i in self.types_id])
+        M_tot = M_types.sum()
+        tau = M_types/M_tot
 
-            attribute_sum = np.sum(particles_attribute)
-            comps_attribute.append(attribute_sum)
-
-        comps_attribute = np.array(comps_attribute)
-        comps_attribute_fractions = comps_attribute / np.sum(comps_attribute)
-
-        #Stange COV
-        comps_cov = []
-        for comp_id in comp_ids:
-            #Other comp ids
-            non_ids = list(set(comp_ids) - set([comp_id]))
-
-            #First term
-            term = ((1-comps_attribute_fractions)/comps_attribute_fractions)**2*\
-                comps_attribute_fractions*comps_attribute_mean*\
-                (1+comps_attribute_std**2/comps_attribute_mean)
-            
-            #Second sum term
-            sum_term = comps_attribute_fractions[non_ids]*comps_attribute_mean[non_ids]*\
-                (1+comps_attribute_std[non_ids]**2/comps_attribute_mean[non_ids])
-            
-            #COV calculation
-            comps_cov.append(1/attribute_sum*(term + sum_term))
-
-
-
-
-
-
-    def calculate_by_attribute_fraction(self):
-        pass
-    def calculate_by_volume_fraction(self):
-        pass
-    def calculate_by_concentration(self):
-        pass
-
-@dataclass
-class Hilden:
-    pass
+        #Typewise COV for each total mass input G
+        cov = np.zeros((len(self.types_id), G_particles.shape[0]), dtype=float)
+        for i in self.types_id:
+            cov_temp = (1-tau[i])**2*self.type_densities[i]*self.D63[i]
+            for j in self.types_id:
+                if j != i:
+                    cov_temp += tau[j]*self.type_densities[j]*self.D63[j]
+            cov[i, :] = np.sqrt(np.pi*cov_temp/(6*self.type_densities))
+        return cov
 
 @dataclass
 class ConcentricSphericalShells:
-    particles: Particles
+    """Generation of concentric spherical shells and calculation of COV"""
+    #Init variables
     cell_matrix: np.ndarray
+    diameters: np.ndarray
+    coordinates: np.ndarray
+    type_ids: np.ndarray
+    n_workers: int
 
-    def _generate_FCC_structure(self, N: int) -> tuple[np.ndarray, float]:
-        """Generates a face-centered-cubic lattice structure of equally sized spheres
+    type_densities: list[float] = field(default_factory=list)
+    dr: float = 0.1         #Concentric spherical shell thickness
+    n_fcc: int = 3          #Number of coordinates within the length of one layer of fcc structure
+    n_shift: int = 3        #Number of coordinate shifts
 
-        Args:
-            N (int): Number of spheres per row
+    #Post init variables
+    r_shells: np.ndarray = field(init=False, repr=False)
+    r_max: float = field(init=False, repr=False)
+    n_shells: int = field(init=False, repr=False)
+    n_centers: int = field(init=False, repr=False)
+    n_types: int = field(init=False, repr=False)
+    PV: np.ndarray = field(init=False, repr=False)
+    
+    def __post_init__(self):
+        #Number of types (components) in packing
+        self.n_types = int(self.type_ids.max())
+
+        # Maximum particle radius
+        self.r_max = 1/2*self.diameters.max()
+
+        # Radial shells with shell width dr
+        self.r_shells = np.arange(self.dr, self.r_max, self.dr)
+        self.n_shells = self.r_shells.shape[0]  
+
+        # Number of center coordinates in fcc structure
+        self.n_centers = self.n_fcc**3+3*(self.n_fcc-1)**2*self.n_fcc
+
+        self.PV = self._calculate_pv_outer(self.n_workers)
+
+    def calculate_by_mass(self) -> tuple[np.ndarray, np.ndarray]:
+        #Check provided densities
+        assert len(self.type_densities) == len(self.type_ids), f'M densities {self.type_densities} do not correspond to the number of types {self.type_ids}.'
+        assert self.type_densities.all() > 0, 'M densities must be positive.'
+
+        #4D matrices used as data containers. 
+        # For each shift, shell, fcc center coordinate and type, calculate:
+        # - mass
+        # - total mass
+        # - mass fractions 
+        M = np.zeros((self.n_shift, 
+                      self.n_shells, 
+                      self.n_centers, 
+                      self.n_types), dtype = float)
+        MTOT = np.zeros((self.n_shift, 
+                         self.n_shells, 
+                         self.n_centers), dtype = float)
+        MFR = np.zeros((self.n_shift, 
+                        self.n_shells, 
+                        self.n_centers, 
+                        self.n_types), dtype = float)
+
+        #Total mass and mass fractions
+        for i in range(self.n_shift):
+            # For each shift
+            for j in range(self.n_shells):
+                # For each shell
+                for k in range(self.n_centers):
+                    # For each center coordinate
+                    # Calculate individual Mes
+                    M[i, j, k, :] = np.multiply(self.PV[i, : , k, j], self.type_densities)
+
+                    # Calculate the total M - summing across components
+                    MTOT[i, j, k] = np.sum(M[i, j, k, :])
+
+                    # Calculate M fractions
+                    if MTOT[i, j, k] == 0:
+                        MFR[i, j, k, :] = 1/self.n_types
+                    else: 
+                        MFR[i, j, k, :] = M[i, j, k, :]/MTOT[i, j, k]
+
+        return MTOT, MFR
+
+    def calculate_by_volume(self) -> tuple[np.ndarray, np.ndarray]:
+        """Calculates CSSM particle volumes and volume fractions for every shift, shell, fcc coordinate and type
 
         Returns:
-            tuple[np.ndarray, float]: Sphere center coordinates and sphere radii
+            tuple[np.ndarray, np.ndarray]: VTOT: Total volume for each shfit, shell and fcc coord. VFR: Volume fraction for each shift, shell, fcc coord and type
         """
+        #4D matrices used as data containers. 
+        # For each shift, shell, fcc center coordinate and type, calculate:
+        # - volume
+        # - total volume
+        # - volume fractions 
+        VTOT = np.zeros((self.n_shift, 
+                         self.n_shells, 
+                         self.n_centers), dtype = float)
+        VFR = np.zeros((self.n_shift, 
+                        self.n_shells, 
+                        self.n_centers, 
+                        self.n_types), dtype = float)
 
-        #Translation matrix and cell origin coordinates
-        H = self.cell_matrix[:3, :3]
+        # Total volume and volume fractions
+        for i in range(self.n_shift):
+            for j in range(self.n_shells):
+                for k in range(self.n_centers):
+                    # For each center coordinate
+                    # Calculate V fractions
+                    VTOT[i, j, k] = np.sum(self.PV[i, :, k, j])
+                    if VTOT[i, j, k] == 0:
+                        VFR[i, j, k, :] = 1/self.n_types
+                    else: 
+                        VFR[i, j, k, :] = self.PV[i, :, k, j]/VTOT[i, j, k]
 
-        # Specify sidelength as the minimum span in x, y, z
-        X = min([H[0,0], H[1, 1], H[2,2]])
+        return VTOT, VFR
 
-        # Outer shell radius
-        r = X/(2*np.sqrt(2)*(N-1) + 2)
+    def calculate_pf_mean_std(self) -> tuple[np.ndarray, np.ndarray]:
+        #Data containers
+        VTOT = np.zeros((self.n_shift, 
+                         self.n_shells, 
+                         self.n_centers), dtype = float)
+        PHI = np.zeros((self.n_shift, 
+                        self.n_shells, 
+                        self.n_centers), dtype = float)
+        
+        #Shell volumes 
+        V_shell = 4*np.pi*self.r_shells**3/3  
 
-        # Lattice parameter
-        A = 2*np.sqrt(2)*r
+        # Packing fractions
+        for i in range(self.n_shift):
+            # For each shift
+            for j in range(self.n_shells):
+                # For each shell
+                for k in range(self.n_centers):
+                    # For each center coordinate
+                    # Calculate the total volume - summing across components
+                    VTOT[i, j, k] = np.sum(self.PV[i, :, k, j])
 
-        # Shift vector
-        x0 = np.array([r, r, r])  
+                    # Calculate the packing fractions
+                    PHI[i, j, k] = VTOT[i, j, k]/V_shell[j]
 
-        # Initialize coordinate array
-        Ntot = N**3 + 3*(N-1)**2*N
+        # Std across different centers 
+        STD_PHI = np.std(PHI, axis = 2, ddof = 1)
+
+        # Mean std of phi across different shift vectors
+        MEAN_STD_PHI = np.mean(STD_PHI, axis = 0)
+
+        # Std of std of phi across different shift vectors
+        STD_STD_PHI = np.std(STD_PHI, axis = 0, ddof = 1)
+        return MEAN_STD_PHI, STD_STD_PHI
+
+    def _generate_fcc_coordinates(self) -> tuple[np.ndarray, float]:
+        """Generates the necessary sampling shell structure"""
+        #Set length by minimum sidelength of the cell
+        l = min([self.cell_matrix[0,0], self.cell_matrix[1, 1], self.cell_matrix[2,2]])
+
+        #Outer shell radius
+        l_max = l/(2*np.sqrt(2)*(self.n_fcc-1) + 2)
+
+        #Lattice parameter
+        A = 2*math.sqrt(2)*l_max
+
+        #Shift vector
+        x0 = np.array([l_max, l_max, l_max])  
+
+        #Initialize coordinate array
+        Ntot = self.n_fcc**3 + 3*(self.n_fcc-1)**2*self.n_fcc
         coordinates = np.zeros((Ntot, 3), dtype = float)
 
-        # Keep track of added shell count
+        #Keep track of added shell count and generate outer
         ind = 0
-
-        # Generate outer
-        for i in range(N):
-            for j in range(N):
-                for k in range(N):
+        for i in range(self.n_fcc):
+            for j in range(self.n_fcc):
+                for k in range(self.n_fcc):
                     coordinates[ind, :] = np.array([A*i, A*j, A*k]) + x0
                     ind += 1
 
-        # Generate inner
-        for i in range(N-1): # X
-            for j in range(N-1): # Y
-                for k in range(N-1): # Z
+        #Generate inner
+        for i in range(self.n_fcc-1): # X
+            for j in range(self.n_fcc-1): # Y
+                for k in range(self.n_fcc-1): # Z
                     coordinates[ind, :] = x0 + np.array([A/2, A/2, 0]) + np.array([A*i, A*j, A*k])
                     ind += 1
                     coordinates[ind, :] = x0 + np.array([A/2, 0, A/2]) + np.array([A*i, A*j, A*k])
@@ -146,12 +403,12 @@ class ConcentricSphericalShells:
                     coordinates[ind :] = x0 + np.array([0, A/2, A/2]) + np.array([A*i, A*j, A*k])
                     ind += 1
 
-        # Add last three faces
-        dx = x0 + np.array([A*(N-1), 0, 0]) + np.array([0, A/2, A/2])
-        dy = x0 + np.array([0, A*(N-1), 0]) + np.array([A/2, 0, A/2])
-        dz = x0 + np.array([0, 0, A*(N-1)]) + np.array([A/2, A/2, 0])
-        for i in range(N-1):
-            for j in range(N-1):
+        #Add last three faces
+        dx = x0 + np.array([A*(self.n_fcc-1), 0, 0]) + np.array([0, A/2, A/2])
+        dy = x0 + np.array([0, A*(self.n_fcc-1), 0]) + np.array([A/2, 0, A/2])
+        dz = x0 + np.array([0, 0, A*(self.n_fcc-1)]) + np.array([A/2, A/2, 0])
+        for i in range(self.n_fcc-1):
+            for j in range(self.n_fcc-1):
                 coordinates[ind, :] = dx + np.array([0, A*i, A*j])
                 ind += 1
                 coordinates[ind, :] = dy + np.array([A*i, 0, A*j])
@@ -159,149 +416,148 @@ class ConcentricSphericalShells:
                 coordinates[ind, :] = dz + np.array([A*i, A*j, 0])
                 ind += 1
 
-        return coordinates, r
+        return coordinates, l_max
 
-    @jit(nopython=True)
-    def _calculate_overlap_volume(R: float, r: float, d: float) -> float:
-        """Volume intersection between spheres - precompiled using numba
+    def _overlap_volume(self, r_shell: float, r: np.ndarray, d: np.ndarray) -> float:
+        """Calculates total overlap volume
 
         Args:
-            R (float): Shell radius
-            r (float): Sphere radii
-            d (float): Sphere distance to shell center
+            r_shell (float): Shall radius
+            r (np.ndarray): Particle sphere radii
+            d (np.ndarray): Particle sphere distance to shell center
 
         Returns:
-            float: Overlap volume
+            float: Total overlap volume
         """
-
-        V = np.pi/12*np.sum((R+r-d)**2*(d**2+2*d*(r+R)-3*(r**2+R**2)+6*r*R)/d)
+        V = np.pi/12*np.sum((r_shell+r-d)**2*(d**2+2*d*(r+r_shell)-3*(r**2+r_shell**2)+6*r*r_shell)/d)
         return V
-
-    def calculate_content_uniformity(self, dr: float=0.1) -> tuple[np.ndarray, np.ndarray]:
-        """Calculates Content Uniformity of packing at last frame using CSSM with spheres distributed as FCC.
+    
+    def _calculate_pv_inner(self, coords: np.ndarray, r: np.ndarray, r_shells: np.ndarray, center_k):
+        """Calculates the particle volume for each shell 
 
         Args:
-            dr (float, optional): Shell thickness. Defaults to 0.1.
+            coords (np.ndarray): _description_
+            r (_type_): _description_
+            r_shells (_type_): _description_
+            center_k (_type_): _description_
 
         Returns:
-            R_shells, Cv (tuple[np.ndarray, np.ndarray]): Radial mixing scale and corresponding Coefficient of Variation as equally sized NumPy-arrays
+            _type_: _description_
         """
+        #Distance to particles from shell center
+        d = np.linalg.norm(coords - center_k, axis=1)
 
-        #Translation matrix and cell origin coordinates
-        H = self.cell_matrix[:3, :3]
-        O = self.cell_matrix[:, -1]
+        #Distance to outer edge of each particle from shell center
+        m = d+r
 
-        # Number of comps in packing
-        N_comps = np.max(self.particles.type_ids).astype(int)
+        # Sort by distance
+        sort_IDs = np.argsort(m)
+        m = m[sort_IDs]
+        r = r[sort_IDs]
+        d = d[sort_IDs]
 
-        # Maximum particle radius
-        R_max = np.max(self.particles.diameters)/2
+        #Total particle volume entirely inside shell
+        V_inside_shell = 0
+
+        #For each shell
+        n_shells = r_shells.shape[0]
+        PV_shell = np.empty(shape=(n_shells,), dtype=float)
+        for l, r_shell in enumerate(r_shells):
+            #Catch if shell is entirely within a particle (occurs for small shell radii)
+            if (r_shell+d<r).any():
+                PV_shell[l] = 4*np.pi/3*r_shell**3
+                continue
+            
+            #Catch particles entirely within the shell
+            inside_shell = np.searchsorted(m, r_shell)
+            if m[inside_shell-1] > r_shell:
+                inside_shell = 0
+            V_inside_shell += 4*np.pi/3*(r[:inside_shell]**3).sum()
+
+            # Remove these particles from consideration
+            r, d, m = r[inside_shell:], d[inside_shell:], m[inside_shell:]
+
+            # Collect particles that intersect and calculate overlap volume
+            isect_shell = d-r < r_shell
+            r_isect, d_isect = r[isect_shell], d[isect_shell]
+            V_overlap_shell = self._overlap_volume(r_shell, r_isect, d_isect)
+            
+            #Particle volume l:th shell
+            PV_shell[l] = V_inside_shell + V_overlap_shell
+        return PV_shell
+
+    def _calculate_pv_outer(self, n_workers: int) -> np.ndarray:
+        #Cell translation matrix and origin
+        origin, H = self.cell_matrix[:, -1], self.cell_matrix[0:3, 0:3]
 
         #Set of translation vectors for wrapped coordinates (3, 27)
         n_set = np.array([p for p in product([0, 1, -1], repeat=3)]).T
-        Hn = (H.T@n_set).T
+        H_set = (H.T@n_set).T
 
-        # Get coordinates from FCC and generate shells
-        N = 3
-        coordinates, L_max = self._generate_FCC_structure(N) 
-        K = np.shape(coordinates)[0]
+        # Get fcc structure coordinates
+        print(f"Generating FCC structure with NFCC : {self.n_fcc}, yielding {self.n_centers} central coordinates")
+        fcc_coords, l_max = self._generate_fcc_coordinates()
+        print("Finished FCC structure")
 
-        # Shift coordinates
-        coords_K = O + coordinates       # (K, 3)  
- 
-        # Radial shells with shell width dr
-        R_shells = np.arange(dr, L_max, dr)
-        N_shells = R_shells.shape[0]
+        # Generate random, uniformly sampled points within the cell
+        print("Sampling random vectors")
+        T = np.random.uniform(low = 0, high = 1, size = (3, self.n_shift))
+        shift_vectors = (H@T).T
+        print("Finished sampling shift vectors")
 
-        # Pre-allocate array for intersection volume for each comp and shell radii
-        V_mat = np.zeros((K, N_shells, N_comps))
+        #Particle volume for each shell center, shell size and type
+        PV = np.zeros((self.n_shift, self.n_types, self.n_centers, self.n_shells), dtype = float)
 
-        # Iterate over each comp
-        for k in range(1, N_comps+1):
-            # Pick out particles of type k 
-            IDs = (self.particles.type_ids==k)
-            C_ = self.particles.coordinates[IDs, :]
-            diams_ = self.particles.diameters[IDs]
+        # Index in order i, j, k, l
+        with Pool(n_workers) as pool:
+            for i in range(self.n_types):
+                #Typewise (component) KD-trees
+                print(f"Concentric shells on component {i}")
+                ids = (self.type_ids==i+1)
+                coords = self.coordinates[ids, :]
+                diams = self.diameters[ids]
 
-            # Tile the coordinate array
-            N = np.shape(C_)[0]
-            coords_uw = np.resize(C_, (27*N, 3))
-            Hn_uw = np.repeat(Hn, N, axis = 0)
-            coords_uw = coords_uw + Hn_uw
-            
-            # Tile diams
-            diams_uw = np.resize(diams_, (27*N, ))
-            radii_uw = diams_uw/2
-
-            # Construct KD Tree of coordinates
-            tree = cKDTree(coords_uw)
-
-            # Iterate over FCC coordinates
-            for i in range(K):
-                center_k = coords_K[i, :]
-
-                # Get particle ids from KDTree
-                tree_IDs = tree.query_ball_point(center_k, L_max+R_max, workers=-1)
-                tree_IDs = np.array(tree_IDs)
-
-                # Get distance to particles from shell center: d
-                C_ = coords_uw[tree_IDs, :]
-                d = np.linalg.norm(C_ - center_k, axis=1)
-                r  = radii_uw[tree_IDs]
-
-                # M denotes the distance to the outer edge of each particle from shell center
-                M = d+r
-
-                # Sort 
-                sort_IDs = np.argsort(M)
-                C_ = C_[sort_IDs, :]
-                M = M[sort_IDs]
-                r = r[sort_IDs]
-                d = d[sort_IDs]
+                #Create unwrapped (uw) particles in all 2^3-1 directions around cell
+                n_type = coords.shape[0]
+                coords_uw = np.resize(coords, (27*n_type, 3))
+                H_set_uw = np.repeat(H_set, n_type, axis=0)
+                coords_uw = coords_uw + H_set_uw
                 
-                # VB denotes the sum particle volume entirely in the shell
-                VB = 0
-                for j, R in enumerate(R_shells):
+                #Unwrap diameters
+                diams_uw = np.resize(diams, (27*n_type, ))
+                radii_uw = diams_uw/2
 
-                    # VS is the shell volume
-                    VS = 4*np.pi/3*R**3
+                #Construct KD Tree of coordinates for efficient neighbor-searching
+                tree = cKDTree(coords_uw)
 
-                    # A indicates whether the shell is entirely in a particle
-                    A = R+d<r
-                    if np.any(A):
-                        VA = 4*np.pi/3*R**3
-                        V_mat[i, j, k-1] = VA
+                coords_uw_list = self.n_centers*[0]
+                r_uw_list = self.n_centers*[0]
+                r_shells_list = self.n_centers*[0]
+                center_list = self.n_centers*[0]
+
+                for j, shift_vector in enumerate(shift_vectors):
+                    # For each shift vector
+                    # Shift coordinates
+                    coords_K = origin + fcc_coords + shift_vector      # (n_centers, 3)
+
+                    for k, center_k in enumerate(coords_K):
+                        center_list[k] = center_k
+
+                        # Get particle ids from KDTree
+                        tree_IDs = tree.query_ball_point(center_k, l_max+self.r_max, workers=n_workers)
+                        tree_IDs = np.array(tree_IDs)
+
+                        #Distribute neighboring coordinates for each center coordinate
+                        coords_uw_list[k] = coords_uw[tree_IDs, :]
+                        r_uw_list[k] = radii_uw[tree_IDs]
+                        r_shells_list[k] = self.r_shells
+
+                    #Calculate particle volumes over shells given list of neighboring coordinate
+                    # for each center coordinate, in parallel
+                    PV_list = pool.starmap(self._calculate_pv_inner, 
+                                       zip(coords_uw_list, r_uw_list, r_shells_list, center_list))
                     
-                    # Catch particles entirely within the shell and add to VB
-                    B = np.searchsorted(M, R)
-                    if M[B-1]>R:
-                        B = 0
-                    VB += 4*np.pi/3*np.sum(r[:B]**3)
-
-                    # Remove these particles from consideration
-                    r, d, M = r[B:], d[B:], M[B:]
-
-                    # Collect particles that intersect
-                    Cind = d-r<R
-                    rC, dC = r[Cind], d[Cind]
-                    VC = self._calculate_overlap_volume(R, rC, dC)
-                    V = VB + VC
-                    V_mat[i, j, k-1] = V
-                    if V/VS>1.03:
-                        print(f"C: {V/VS}, r : {R}, coord : {center_k}")
-                        print(f"xlo : {O}")
-
-        # Calculate volume fractions 
-        for i in range(K):
-            for j in range(N_shells):
-                V_tot = np.sum(V_mat[i, j, :])
-                if V_tot == 0:
-                    V_mat[i, j, :] = 1/N_comps
-                else:
-                    V_mat[i, j, :] = V_mat[i, j, :]/V_tot
-        
-        # Calculate standard deviations and means
-        V_std = np.std(V_mat, axis=0, ddof=1)
-        V_mean = np.mean(V_mat, axis=0)
-        Cv = np.divide(V_std, V_mean)
-        return R_shells, Cv
+                    #Unpack values
+                    for k in range(self.n_centers):
+                        PV[j, i, k, :] = np.array(PV_list[k])
+        return PV
