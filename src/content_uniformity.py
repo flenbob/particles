@@ -267,32 +267,28 @@ class COVCurveFitter:
     
     def fit(self, X: np.ndarray, Y: np.ndarray, SY: np.ndarray, verbose = False):
         # Generic fit function
-        def _loss_single(a: list, b: list):
-            residuals = (Y - a[0]/X**b[0])**2
+        def _loss(p0):
+            residuals = (Y - p0[0]/X**p0[1])**2
             weights = X**3/SY
             return (residuals*weights).sum()
-    
-        def _func_(x, p0):
-            a, b = p0[0], p0[1]
-            return a/x**b
         
         # Initial guessses
         b = 1/2
         a = np.sum(X**3*Y/(SY*X**b))/np.sum(X**3/(SY*X**(2*b)))
 
-        loss_a = lambda p: _loss_single([p], [b])
+        # Minize in both
+        min_both = minimize(_loss, x0 = [a, b], method='Nelder-Mead', tol=1e-6, options = {'maxiter': 20000}, bounds = ((0, None), (0, None)))
+        params = min_both.x
+        self.a, self.b =  params[0], params[1]
+        print(f"Parameters : {params}")
+        if verbose:
+            print(min_both.message)
+        return
 
-        # Minimize in a
-        min_a = minimize(loss_a, x0 = [a], method='Nelder-Mead', tol=1e-6, options = {'maxiter': 20000})
-        a = min_a.x
 
-        # Minimize in b
-        loss_b = lambda p: _loss_single([a], [p])
-        min_b = minimize(loss_b, x0 = [b], method='Nelder-Mead', tol=1e-6, options = {'maxiter': 20000})
-        b = min_b.x
 
-        self.a = a
-        self.b = b
+
+
 
     def calculate_by_mass(self, G_particles: np.ndarray) -> float:
         """Calculates Stange COV with respect to M fractions"""
