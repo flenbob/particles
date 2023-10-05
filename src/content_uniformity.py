@@ -4,6 +4,7 @@ from multiprocessing import Pool
 from itertools import product
 
 import numpy as np
+from scipy.stats import truncnorm
 from scipy.optimize import minimize, basinhopping
 from scipy.spatial import cKDTree
 import matplotlib.pyplot as plt
@@ -87,20 +88,31 @@ class COVPredictor:
     type_ids: np.ndarray
     flag: str                  # Specifies mass or volume
     rescale_factor : float = 1
+    alpha : float = 0.05
 
     type_densities: np.ndarray = field(default_factory=list)
 
+    cov_mean: list[np.ndarray] = field(default_factory=list, init=False, repr=False)
     cov_mean_pred: list[np.ndarray] = field(default_factory=list, init=False, repr=False)
     cov_mean_pred_contd: list[np.ndarray] = field(default_factory=list, init=False, repr=False)
-    cov_std_pred: list[np.ndarray] = field(default_factory=list, init=False, repr=False)
-    cov_std_pred_contd: list[np.ndarray] = field(default_factory=list, init=False, repr=False)
+
+    #Confidence intervals
+    cov_upper_pred: list[np.ndarray] = field(default_factory=list, init=False, repr=False)
+    cov_lower_pred: list[np.ndarray] = field(default_factory=list, init=False, repr=False)
+    cov_upper_pred_contd: list[np.ndarray] = field(default_factory=list, init=False, repr=False)
+    cov_lower_pred_contd: list[np.ndarray] = field(default_factory=list, init=False, repr=False)
+
+    # Standard deviation
+    cov_std : list[np.ndarray] = field(default_factory=list, init=False, repr=False)
+    cov_std_pred : list[np.ndarray] = field(default_factory=list, init=False, repr=False)
+
     x_pts: list[np.ndarray] = field(default_factory=list, init=False, repr=False)
     x_pts_contd: list[np.ndarray] = field(default_factory=list, init=False, repr=False)
     
     def predict(self, X: np.ndarray, Y: np.ndarray) -> None: 
         #Estimate COV given data
         estimator = COVEstimator()
-        self.cov_mean, self.cov_std, x_pts = estimator.fit_predict(X, Y)
+        cov_mean, cov_std, x_pts = estimator.fit_predict(X, Y)
 
         # Calculate the cell volume/mass
         unique_ids = np.unique(self.type_ids)
@@ -123,25 +135,53 @@ class COVPredictor:
         self.x_pts_contd = x_pts_contd
 
         #Predict COV for each component
-        for uq_id in unique_ids:
+        Nuqs = np.size(unique_ids)
+        for i in range(Nuqs):
+
+
             CF_mean = COVCurveFitter()
-            CF_mean.fit(x_pts, self.cov_mean[uq_id-1,:], self.cov_std[uq_id-1, :])
-            plt.scatter(np.log(x_pts), np.log(self.cov_mean[uq_id-1,:]), color='g', label='mean')
-            plt.scatter(np.log(x_pts), np.log(self.cov_std[uq_id-1,:]), color='r', label='std')
-            plt.legend()
-            plt.show()
+            CF_mean.fit(x_pts, cov_mean[i,:], cov_std[i, :])
+
             print(f"Params mean: {CF_mean.a, CF_mean.b}")
 
             #Curve fit to produce std of COV prediction 
             CF_std = COVCurveFitter()
-            CF_std.fit(self.x_pts, self.cov_std[uq_id-1, :], 1)
+            CF_std.fit(self.x_pts, cov_std[i, :], 1)
             print(f"Params std: {CF_std.a, CF_std.b}")
 
             #Curve predict available points + continued range on both mean and std
+            CF_mean_pred = CF_mean.predict(x_pts)
+            CF_mean_pred_contd = CF_mean.predict(x_pts_contd)
+
+            CF_std_pred = CF_std.predict(x_pts)
+            CF_std_pred_contd = CF_std.predict(x_pts_contd)
+
+            # Construct confidence intervals
+            clip_a0, clip_b0 = -CF_mean_pred/CF_std_pred, np.full(np.shape(CF_std_pred), np.inf)           # Clips for truncated normal
+            clip_ap, clip_bp = -CF_mean_pred_contd/CF_std_pred_contd, np.full(np.shape(CF_std_pred_contd), np.inf)
+
+            N0 = np.size(CF_mean_pred)
+            Np = np.size(CF_mean_pred_contd) 
+
+            upper_pred = np.array([truncnorm.ppf(self.alpha/2, clip_a0[j], clip_b0[j], CF_mean_pred[j], CF_std_pred[j]) for j in range(N0)])
+            lower_pred = np.array([truncnorm.ppf(1-self.alpha/2, clip_a0[j], clip_b0[j], CF_mean_pred[j], CF_std_pred[j]) for j in range(N0)])
+
+            upper_pred_contd = np.array([truncnorm.ppf(self.alpha/2, clip_ap[j], clip_bp[j], CF_mean_pred_contd[j], CF_std_pred_contd[j]) for j in range(Np)])
+            lower_pred_contd = np.array([truncnorm.ppf(1-self.alpha/2, clip_ap[j], clip_bp[j], CF_mean_pred_contd[j], CF_std_pred_contd[j]) for j in range(Np)])
+
+            self.cov_mean.append(cov_mean[i,:])
+            self.cov_std.append(cov_std[i,:])
+
+
             self.cov_mean_pred.append(CF_mean.predict(x_pts))
             self.cov_mean_pred_contd.append(CF_mean.predict(x_pts_contd))
-            self.cov_std_pred.append(CF_std.predict(x_pts))
-            self.cov_std_pred_contd.append(CF_std.predict(x_pts_contd))
+
+            self.cov_upper_pred.append(upper_pred)
+            self.cov_lower_pred.append(lower_pred)
+            self.cov_upper_pred_contd.append(upper_pred_contd)
+            self.cov_lower_pred_contd.append(lower_pred_contd)
+            self.cov_std_pred.append(CF_std_pred)
+
         return 
                   
 class COVEstimator:
@@ -280,7 +320,6 @@ class COVCurveFitter:
         min_both = minimize(_loss, x0 = [a, b], method='Nelder-Mead', tol=1e-6, options = {'maxiter': 20000}, bounds = ((0, None), (0, None)))
         params = min_both.x
         self.a, self.b =  params[0], params[1]
-        print(f"Parameters : {params}")
         if verbose:
             print(min_both.message)
         return

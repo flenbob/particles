@@ -209,7 +209,15 @@ class Plotter:
         Y0, sY0 = cv_pred.cov_mean, cv_pred.cov_std
 
         # Prediction of fitting range and continuation
-        Y0p, sY0p, Yp, sYp = cv_pred.cov_mean_pred, cv_pred.cov_std_pred, cv_pred.cov_mean_pred_contd, cv_pred.cov_std_pred_contd
+        Y0p = cv_pred.cov_mean_pred
+        upper_0 = cv_pred.cov_upper_pred
+        lower_0 = cv_pred.cov_lower_pred
+        
+        Yp = cv_pred.cov_mean_pred_contd
+        upper_p = cv_pred.cov_upper_pred_contd
+        lower_p = cv_pred.cov_lower_pred_contd
+
+        sY0p = cv_pred.cov_std_pred
 
         # Get Stange
         Y0_stange = stange.calc_CU(X0)
@@ -226,16 +234,16 @@ class Plotter:
             axs1.set_title("COV of CSSM data and curvefit")
 
             # Plot original data
-            # Cut such that Stange < 0.1
-            ind = Y0_stange[i, :]<0.1
+            # Cut such that Stange < 0.2
+            ind = Y0_stange[i, :] < 0.2
             axs1.plot(X0[ind], Y0[i][ind], color = "k", label = "Raw data")
             axs1.plot(X0[ind], Y0[i][ind] + 1.96*sY0[i][ind], color = 'k', linestyle = 'dashed')
             axs1.plot(X0[ind], Y0[i][ind] - 1.96*sY0[i][ind], color = 'k', linestyle = 'dashed')
 
             # Plot fitting and Stange on fitting range
             axs1.plot(X0[ind], Y0p[i][ind], color = "b", label  = "Fit")
-            axs1.plot(X0[ind], Y0p[i][ind] + 1.96*sY0p[i][ind], color = 'b', linestyle = 'dashed')
-            axs1.plot(X0[ind], Y0p[i][ind] - 1.96*sY0p[i][ind], color = 'b', linestyle = 'dashed')
+            axs1.plot(X0[ind], upper_0[i][ind], color = 'b', linestyle = 'dashed')
+            axs1.plot(X0[ind], lower_0[i][ind], color = 'b', linestyle = 'dashed')
             axs1.plot(X0[ind], Y0_stange[i, ind], color = "r", label  = "Stange")
 
             # Axs 2: 
@@ -250,8 +258,8 @@ class Plotter:
 
             # Plot fit prediction and Stange on continuation range
             axs3.plot(Xp, Yp[i], color = "b", label = "Prediction")
-            axs3.plot(Xp, Yp[i] + 1.96*sYp[i], color = 'b', linestyle = 'dashed')
-            axs3.plot(Xp, Yp[i] - 1.96*sYp[i], color = 'b', linestyle = 'dashed')
+            axs3.plot(Xp, upper_p[i], color = 'b', linestyle = 'dashed')
+            axs3.plot(Xp, lower_p[i], color = 'b', linestyle = 'dashed')
             axs3.plot(Xp, Yp_stange[i, :], color = "r", label = "Stange")
 
             # Misc.
