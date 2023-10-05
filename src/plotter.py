@@ -5,6 +5,8 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker
 import matplotlib.ticker as ticker
 
+from .content_uniformity import COVPredictor, Stange
+
 @dataclass
 class Plotter:
     def plot_Z_distribution(self, particle_types: np.ndarray, particle_contacts: np.ndarray) -> None:
@@ -196,8 +198,84 @@ class Plotter:
         fig.tight_layout()
         plt.show()
 
-    def plot_content_uniformity(self):
-        pass
+    def plot_content_uniformity(self, cv_pred: COVPredictor, stange: Stange, xlab  : str):
+        # Cov predictor is already fitted to data
+        # Stange has been set to either mass or volume
+
+        # Get fitting and prediction range
+        X0, Xp = cv_pred.x_pts, cv_pred.x_pts_contd
+
+        # True data
+        Y0, sY0 = cv_pred.cov_mean, cv_pred.cov_std
+
+        # Prediction of fitting range and continuation
+        Y0p, sY0p, Yp, sYp = cv_pred.cov_mean_pred, cv_pred.cov_std_pred, cv_pred.cov_mean_pred_contd, cv_pred.cov_std_pred_contd
+
+        # Get Stange
+        Y0_stange = stange.calc_CU(X0)
+        Yp_stange = stange.calc_CU(Xp)
+
+        Ncomps = np.shape(Y0)[0]
+        for i in range(Ncomps):
+            # Plot in a single window
+            axs1 = plt.subplot(2, 2, 1)
+            axs2 = plt.subplot(2, 2, 2)
+            axs3 = plt.subplot(2, 1, 2)
+
+            # Axs 1: 
+            axs1.set_title("COV of CSSM data and curvefit")
+
+            # Plot original data
+            # Cut such that Stange < 0.1
+            ind = Y0_stange[i, :]<0.1
+            axs1.plot(X0[ind], Y0[i][ind], color = "k", label = "Raw data")
+            axs1.plot(X0[ind], Y0[i][ind] + 1.96*sY0[i][ind], color = 'k', linestyle = 'dashed')
+            axs1.plot(X0[ind], Y0[i][ind] - 1.96*sY0[i][ind], color = 'k', linestyle = 'dashed')
+
+            # Plot fitting and Stange on fitting range
+            axs1.plot(X0[ind], Y0p[i][ind], color = "b", label  = "Fit")
+            axs1.plot(X0[ind], Y0p[i][ind] + 1.96*sY0p[i][ind], color = 'b', linestyle = 'dashed')
+            axs1.plot(X0[ind], Y0p[i][ind] - 1.96*sY0p[i][ind], color = 'b', linestyle = 'dashed')
+            axs1.plot(X0[ind], Y0_stange[i, ind], color = "r", label  = "Stange")
+
+            # Axs 2: 
+            axs2.set_title("STD of COV of CSSM data and curvefit")
+
+            # Plot the cov std data and its fit
+            axs2.plot(X0, sY0[i], color = "k", label = "Std data")
+            axs2.plot(X0, sY0p[i], color = "b", label = "Std fit")
+
+            # Axs 3: 
+            axs3.set_title("COV of CSSM data and curvefit over entire range")
+
+            # Plot fit prediction and Stange on continuation range
+            axs3.plot(Xp, Yp[i], color = "b", label = "Prediction")
+            axs3.plot(Xp, Yp[i] + 1.96*sYp[i], color = 'b', linestyle = 'dashed')
+            axs3.plot(Xp, Yp[i] - 1.96*sYp[i], color = 'b', linestyle = 'dashed')
+            axs3.plot(Xp, Yp_stange[i, :], color = "r", label = "Stange")
+
+            # Misc.
+            axs1.set_ylabel("Cv")
+            axs1.set_ylabel("Std")
+            axs3.set_ylabel("Cv")
+
+            axs1.set_xlabel(xlab)
+            axs1.set_xlabel(xlab)
+            axs3.set_xlabel(xlab)
+
+            axs1.legend()
+            axs2.legend()
+            axs3.legend()
+
+            axs1.set_yscale('log')
+            axs2.set_yscale('log')
+            axs3.set_yscale('log')
+
+            axs1.set_ylabel('COV')
+            axs2.set_ylabel('COV')
+            axs3.set_ylabel('COV')
+            plt.suptitle(f"Component {i+1}, CV/STD wrt. mass[{xlab}]")
+            plt.show()
 
     def plot_particle_size_distribution(self, particle_types: np.ndarray, particle_diameters: np.ndarray):
         pass

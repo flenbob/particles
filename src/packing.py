@@ -30,6 +30,7 @@ class Particles:
     type_ids: np.ndarray
     diameters: np.ndarray
     coordinates: np.ndarray = None
+    rescale_factor: float = None
 
     def sort_by_diameters(self, order: str) -> None:
         match order:
@@ -427,7 +428,7 @@ class ParticlesGenerator:
 
         #Return particles as particle object (without coordinates)
         print(f"Sampled {diameters.shape[0]} particles given componentwise CVs: {self.params[Param.cv]}")
-        return Particles(ids, type_ids, diameters)
+        return Particles(ids, type_ids, diameters, rescale_factor=np.min(diameters))
 
     def _calculate_required_scale(self) -> tuple[int, float]:
         """Use Stange to calculate total volume of particles and expected number of particles to satisfy input CV (Coefficient of Variation)"""
@@ -466,11 +467,13 @@ class ParticlesGenerator:
                   Param.sigma: table[:, 4].astype(float),
                   Param.cv: table[:, 5].astype(float)}
         
+        #Rescale densities from kg/m^3 to yg/ym^3
+        params['density'] = params['density']*(1e-9)
+
         #Convert mean and std to mu and sigma
         mu, sigma = params[Param.mu], params[Param.sigma]
         params[Param.mu] = np.log(mu**2/(np.sqrt(mu**2+sigma**2)))
         params[Param.sigma] = np.sqrt(np.log(1+sigma**2/mu**2))
-
         return params
     
     def _check_params(self) -> None:
@@ -492,12 +495,17 @@ class Packing:
 
     #Constants
     initial_volume_fraction: float = 0.05
+    rescale_factor: float = None
+    density_types: np.ndarray = None
 
     def generate_packing(self, table_path: Path) -> None:
         """Generates packing given input table"""
         
         #Generate particles (ids, types, diameters)
-        self.particles = ParticlesGenerator(table_path).generate_particles()
+        generator = ParticlesGenerator(table_path)
+        self.particles = generator.generate_particles()
+        self.types_density = generator.params['density']
+        self.rescale_factor = self.particles.rescale_factor
 
         #Set simulation box width
         self.box_width = (np.pi/(6*self.initial_volume_fraction)*np.sum(self.particles.diameters**3))**(1/3)

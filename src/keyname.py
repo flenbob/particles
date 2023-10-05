@@ -22,6 +22,8 @@ class CommonKey(Enum):
     particle_diameters = auto()
     scalars = auto()
     polydispersity = auto()
+    density_types = auto()
+    rescale_factor = auto()
 
     def __str__(self):
         return self.name

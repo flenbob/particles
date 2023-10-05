@@ -2,7 +2,9 @@ import os
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+
 import numpy as np
+import h5py
 
 from .datawriter import DataWriter
 from .filename import FileName
@@ -35,7 +37,7 @@ class Runner:
         assert table_path.exists(), f"Path to input table {table_path} is not valid."
 
         #Set destination folder path
-        self._set_destiation_folder(folder_path)
+        self._set_destination_folder(folder_path)
 
         #Set simulation script type
         self._set_script(script) 
@@ -55,6 +57,11 @@ class Runner:
         #Convert LAMMPS dumpfiles to HDF5 file
         DataWriter(self.folder_path).write_hdf5()
 
+        #Also write rescale factor and densities of each type to hdf5 file
+        with h5py.File(self.folder_path, 'a') as file:
+            file.create_dataset(f'rescale_factor', data=float(packing.rescale_factor))
+            file.create_dataset(f'types_density', data=float(packing.types_density))
+            
     def run_existing(self, script: str, packing_path: Path, n_tasks: int, screen: bool = False) -> None:
         """Runs a complete simulation on existing LAMMPS formatted packing file
 
@@ -106,7 +113,7 @@ class Runner:
             
         self.script_path = Path(Path.cwd())/f'simulations/scripts/{script}'
     
-    def _set_destiation_folder(self, folder_path) -> None:
+    def _set_destination_folder(self, folder_path) -> None:
         """Sets destination folder for simulation files"""
         #New folder generated at standard path
         if folder_path is None:

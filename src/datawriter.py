@@ -80,7 +80,6 @@ class DataWriter:
                 file.create_dataset(str(CommonKey.particle_ids), data=attrs[:, 0])
                 file.create_dataset(str(CommonKey.particle_types), data=attrs[:, 1])
                 file.create_dataset(str(CommonKey.particle_diameters), data=attrs[:, 2])
-
                 #Frame dependent attributes
                 for frame in range(pipeline_global.source.num_frames):
                     data_global = pipeline_global.compute(frame)

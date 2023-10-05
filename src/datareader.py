@@ -1,7 +1,6 @@
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
-from packing import Particles
 
 import h5py
 import numpy as np
@@ -60,7 +59,7 @@ class DataReader:
         """Prints datakeys in HDF5 file"""
         #Reformat Format frames output if they are too many
         if len(self.frames) > 5:
-            frames = [str(i) for i in range(self.frames[0], self.frames[0] + 3)] + ['...', str(self.frames[-1])]
+            frames = [str(i) for i in range(self.frames[0], self.frames[0] + 3)] + ['...', str(len(self.frames))]
             frames_reformatted = '[' + ', '.join(frames) + ']'
             print(f'Frames: {frames_reformatted}\nFrame keys: {self.frame_keys}\nCommon keys: {self.common_keys}')
         else:
