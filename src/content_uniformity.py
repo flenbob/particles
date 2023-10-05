@@ -6,7 +6,7 @@ from itertools import product
 import numpy as np
 from scipy.optimize import minimize, basinhopping
 from scipy.spatial import cKDTree
-
+import matplotlib.pyplot as plt
 @dataclass
 class Stange:
     """Stange COV calculation given input PSD and total mass/volume"""
@@ -126,6 +126,10 @@ class COVPredictor:
         for uq_id in unique_ids:
             CF_mean = COVCurveFitter()
             CF_mean.fit(x_pts, self.cov_mean[uq_id-1,:], self.cov_std[uq_id-1, :])
+            plt.scatter(np.log(x_pts), np.log(self.cov_mean[uq_id-1,:]), color='g', label='mean')
+            plt.scatter(np.log(x_pts), np.log(self.cov_std[uq_id-1,:]), color='r', label='std')
+            plt.legend()
+            plt.show()
             print(f"Params mean: {CF_mean.a, CF_mean.b}")
 
             #Curve fit to produce std of COV prediction 
@@ -261,29 +265,34 @@ class COVCurveFitter:
     def predict(self, x: np.ndarray) -> np.ndarray:
         return self.a/x**(self.b)
     
-    def fit(self, X: np.ndarray, Y_mean: np.ndarray, Y_std, verbose: bool=True) -> None:
+    def fit(self, X: np.ndarray, Y: np.ndarray, SY: np.ndarray, verbose = False):
         # Generic fit function
+        def _loss_single(a: list, b: list):
+            residuals = (Y - a[0]/X**b[0])**2
+            weights = X**3/SY
+            return (residuals*weights).sum()
+    
         def _func_(x, p0):
             a, b = p0[0], p0[1]
-            return a/x**(b)
+            return a/x**b
+        
+        # Initial guessses
+        b = 1/2
+        a = np.sum(X**3*Y/(SY*X**b))/np.sum(X**3/(SY*X**(2*b)))
 
-        def _loss(p0):
-            residuals = (Y_mean - _func_(X, p0))**2
-            weights = X**3/Y_std
-            loss = np.sum(np.multiply(residuals, weights))
-            return loss
+        loss_a = lambda p: _loss_single([p], [b])
 
-        # Curve fitting
-        p0 = [50, 1/2]
-        bnds = ((0, None), (0, None))
-        res = minimize(_loss, x0 = p0, method='Nelder-Mead', tol = 1e-6, options = {'maxiter': 10000}, bounds=bnds)
-        params = res.x
-        self.a, self.b = params[0], params[1]
+        # Minimize in a
+        min_a = minimize(loss_a, x0 = [a], method='Nelder-Mead', tol=1e-6, options = {'maxiter': 20000})
+        a = min_a.x
 
-        if verbose:
-            print(res.message)
+        # Minimize in b
+        loss_b = lambda p: _loss_single([a], [p])
+        min_b = minimize(loss_b, x0 = [b], method='Nelder-Mead', tol=1e-6, options = {'maxiter': 20000})
+        b = min_b.x
 
-        return 
+        self.a = a
+        self.b = b
 
     def calculate_by_mass(self, G_particles: np.ndarray) -> float:
         """Calculates Stange COV with respect to M fractions"""
@@ -319,7 +328,7 @@ class CSSMDataGenerator:
     type_densities: list[float] = field(default_factory=list)
     dr: float = 0.1         #Concentric spherical shell thickness
     n_fcc: int = 2          #Number of coordinates within the length of one layer of fcc structure
-    n_shift: int = 10       #Number of coordinate shifts
+    n_shift: int = 50       #Number of coordinate shifts
 
     #Post init variables
     r_shells: np.ndarray = field(init=False, repr=False)
@@ -412,41 +421,6 @@ class CSSMDataGenerator:
                         VFR[i, j, k, :] = self.PV[i, :, k, j]/VTOT[i, j, k]
 
         return VTOT, VFR
-
-    def get_pf_mean_std(self) -> tuple[np.ndarray, np.ndarray]:
-        #Data containers
-        VTOT = np.zeros((self.n_shift, 
-                         self.n_shells, 
-                         self.n_centers), dtype = float)
-        PHI = np.zeros((self.n_shift, 
-                        self.n_shells, 
-                        self.n_centers), dtype = float)
-        
-        #Shell volumes 
-        V_shell = 4*np.pi*self.r_shells**3/3  
-
-        # Packing fractions
-        for i in range(self.n_shift):
-            # For each shift
-            for j in range(self.n_shells):
-                # For each shell
-                for k in range(self.n_centers):
-                    # For each center coordinate
-                    # Calculate the total volume - summing across components
-                    VTOT[i, j, k] = np.sum(self.PV[i, :, k, j])
-
-                    # Calculate the packing fractions
-                    PHI[i, j, k] = VTOT[i, j, k]/V_shell[j]
-
-        # Std across different centers 
-        STD_PHI = np.std(PHI, axis = 2, ddof = 1)
-
-        # Mean std of phi across different shift vectors
-        MEAN_STD_PHI = np.mean(STD_PHI, axis = 0)
-
-        # Std of std of phi across different shift vectors
-        STD_STD_PHI = np.std(STD_PHI, axis = 0, ddof = 1)
-        return MEAN_STD_PHI, STD_STD_PHI
 
     def _generate_fcc_coordinates(self) -> tuple[np.ndarray, float]:
         """Generates the necessary sampling shell structure"""
