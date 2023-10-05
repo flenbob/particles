@@ -433,8 +433,9 @@ class ParticlesGenerator:
     def _calculate_required_scale(self) -> tuple[int, float]:
         """Use Stange to calculate total volume of particles and expected number of particles to satisfy input CV (Coefficient of Variation)"""
         D63 = np.exp(3*self.params[Param.mu]+27/2*self.params[Param.sigma]**2)
-        volume_fraction_D = np.sum(self.params[Param.mass_fraction]/self.params[Param.density])
-        volume_fraction = self.params[Param.mass_fraction]/(self.params[Param.density]*volume_fraction_D)
+
+        mass_fraction = self.params[Param.mass_fraction]
+        rho = self.types_density    
 
         #Sum over each component
         N_components = self.params[Param.types_id].shape[0]
@@ -443,16 +444,16 @@ class ParticlesGenerator:
         for id in self.params[Param.types_id]-1:
             mask_ = np.copy(mask)
             mask_[id] = False
-            kappa[id] = (1-volume_fraction[id])**2/volume_fraction[id]*D63[id] + np.sum(volume_fraction[mask_]*D63[mask_])
+            kappa[id] = (1-mass_fraction[id])**2/mass_fraction[id]*D63[id]*rho[id] + np.sum(mass_fraction[mask_]*D63[mask_]*rho[mask_])
 
         #Solid particle volume required to satisfy cv (Stange)     
-        volume_particles = np.max(kappa/self.params[Param.cv]**2)
+        mass_particles = np.max(kappa/self.params[Param.cv]**2)
 
         # Sample particles until the sought solid particle volume is reached
         E_D3 = np.exp(3*self.params[Param.mu]+9/2*self.params[Param.sigma]**2) #Expected diameter cubed component-wise
-        N_comp = np.floor((6*volume_fraction*volume_particles)/(np.pi*E_D3)).astype(int)
+        N_comp = np.floor((6*mass_fraction*mass_particles)/(np.pi*E_D3*rho)).astype(int)
         N_particles_expected = np.sum(N_comp)
-        return N_particles_expected, volume_particles
+        return N_particles_expected, mass_particles
 
     def _load_table_params(self) -> dict:
         """Loads CSV table and converts to dictionary with parameters"""
