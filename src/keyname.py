@@ -1,29 +1,30 @@
-from enum import Enum, auto
+from enum import Enum
 
-class FrameKey(Enum):
+class FrameKey(str, Enum):
     """Names of frame keys"""
-    cell_matrix = auto()
-    Z_g = auto()
-    Z_nr = auto()
-    contact_pairs = auto()
-    distance_pairs = ()
-    particle_contacts = auto()
-    particle_coordinates = auto()
-    packing_fraction = auto()
-    volume = auto()
+    cell_matrix = 'cell_matrix'
+    Z_g = 'Z_g'
+    Z_nr = 'Z_nr'
+    contact_pairs = 'contact_pairs'
+    distance_pairs = 'distance_pairs'
+    particles = 'particles'
+    particle_contacts = 'particle_contacts'
+    particle_coordinates = 'particle_coordinates'
+    packing_fraction = 'packing_fraction'
+    volume = 'volume'
 
     def __str__(self):
-        return self.name
-    
+        return self.value
+
 class CommonKey(Enum):
     """Names of common keys"""
-    particle_ids = auto()
-    particle_types = auto()
-    particle_diameters = auto()
-    scalars = auto()
-    polydispersity = auto()
-    density_types = auto()
-    rescale_factor = auto()
+    particle_ids = 'particle_ids'
+    particle_types = 'particle_types'
+    particle_diameters = 'particle_diameters'
+    scalars = 'scalars'
+    polydispersity = 'polydispersity' 
+    density_types = 'density_types'
+    rescale_factor = 'rescale_factor' 
 
     def __str__(self):
-        return self.name
+        return self.value

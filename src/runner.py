@@ -9,6 +9,7 @@ import h5py
 from .datawriter import DataWriter
 from .filename import FileName
 from .packing import Packing
+from .keyname import FrameKey, CommonKey
 
 
 class LAMMPSScript(Enum):
@@ -58,9 +59,9 @@ class Runner:
         DataWriter(self.folder_path).write_hdf5()
 
         #Also write rescale factor and densities of each type to hdf5 file
-        with h5py.File(self.folder_path, 'a') as file:
-            file.create_dataset(f'rescale_factor', data=float(packing.rescale_factor))
-            file.create_dataset(f'types_density', data=float(packing.types_density))
+        with h5py.File(self.folder_path/FileName.DATA_FILE.value, 'a') as file:
+            file.create_dataset(f'{CommonKey.rescale_factor}', data=float(packing.particles.rescale_factor))
+            file.create_dataset(f'{CommonKey.density_types}', data=packing.particles.density_types)
             
     def run_existing(self, script: str, packing_path: Path, n_tasks: int, screen: bool = False) -> None:
         """Runs a complete simulation on existing LAMMPS formatted packing file
@@ -91,7 +92,12 @@ class Runner:
         self._initialize_lammps_script(collection_intervals, n_tasks, screen)
 
         #Convert LAMMPS dumpfiles to HDF5 file
-        DataWriter(self.folder_path).write_hdf5()    
+        DataWriter(self.folder_path).write_hdf5()
+
+        #Also write rescale factor and densities of each type to hdf5 file
+        with h5py.File(self.folder_path, 'a') as file:
+            file.create_dataset(f'{CommonKey.rescale_factor}', data=float(packing.particles.rescale_factor))
+            file.create_dataset(f'{CommonKey.density_types}', data=float(packing.particles.density_types))
 
     def _set_script(self, script: str) -> None:
         """Selects type of LAMMPS script to run

@@ -6,6 +6,7 @@ import matplotlib.ticker
 import matplotlib.ticker as ticker
 
 from .content_uniformity import COVPredictor, Stange
+from .particles import Particles
 
 @dataclass
 class Plotter:
@@ -198,7 +199,7 @@ class Plotter:
         fig.tight_layout()
         plt.show()
 
-    def plot_content_uniformity(self, cv_pred: COVPredictor, stange: Stange, xlab  : str):
+    def plot_content_uniformity(self, cv_pred: COVPredictor, particles: Particles) -> None:
         # Cov predictor is already fitted to data
         # Stange has been set to either mass or volume
 
@@ -219,9 +220,9 @@ class Plotter:
 
         sY0p = cv_pred.cov_std_pred
 
-        # Get Stange
-        Y0_stange = stange.calc_CU(X0)
-        Yp_stange = stange.calc_CU(Xp)
+        # Get Stange COV estimates
+        Y0_stange = Stange().cov_given_mass_particles(particles, X0)
+        Yp_stange = Stange().cov_given_mass_particles(particles, Xp)
 
         Ncomps = np.shape(Y0)[0]
         for i in range(Ncomps):
@@ -267,6 +268,7 @@ class Plotter:
             axs1.set_ylabel("Std")
             axs3.set_ylabel("Cv")
 
+            xlab = 'Total mass [μg]'
             axs1.set_xlabel(xlab)
             axs1.set_xlabel(xlab)
             axs3.set_xlabel(xlab)
@@ -284,10 +286,3 @@ class Plotter:
             axs3.set_ylabel('COV')
             plt.suptitle(f"Component {i+1}, CV/STD wrt. mass[{xlab}]")
             plt.show()
-
-    def plot_particle_size_distribution(self, particle_types: np.ndarray, particle_diameters: np.ndarray):
-        pass
-
-    def print_summary_statistics(self):
-        pass
-        

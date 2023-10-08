@@ -5,6 +5,9 @@ from typing import Optional
 import h5py
 import numpy as np
 
+from .particles import Particles
+from .keyname import FrameKey, CommonKey
+
 
 @dataclass
 class DataReader:
@@ -16,7 +19,7 @@ class DataReader:
     frame_keys: list[str] = field(default_factory=list, init=False)
     common_keys: list[str] = field(default_factory=list, init=False)
 
-    def get_data(self, selected_keys: str | list[str], selected_frames: Optional[int | list[int]] = None) -> list[float | int | np.ndarray]:
+    def get_data(self, selected_keys: str | list[str], selected_frames: Optional[int | list[int]] = None) -> dict[np.ndarray | float | Particles]:
         """Reads data given selected key(s) at selected frame(s) if required.
 
         Args:
@@ -24,7 +27,7 @@ class DataReader:
             selected_frames (Optional[int | list[int]], optional): String identifier of frame(s) if any of the sought keys are frame dependent. Defaults to None.
 
         Returns:
-            list[float | int | np.ndarray]: List of data in same order as keys were provided
+            dict[float | int | np.ndarray]: Dictionary of data with values for each provided key.
         """
 
         #Convert single key and/or frame to list
@@ -44,16 +47,28 @@ class DataReader:
         self._check_keys(selected_keys)
 
         #Read each key and append data
-        data = []
+        data = {key: None for key in selected_keys}
         with h5py.File(self.data_path, 'r') as file:
             for key in selected_keys:
                 if key in self.frame_keys:
-                    data_frames = [np.array(file[f'{frame}/{key}']) for frame in selected_frame_ids]
-                    data.append(data_frames) if len(data_frames) > 1 else data.append(data_frames[0])
-                else:
-                    data.append(np.array(file[f'{key}']))
+                    if key == 'particles':
+                        #Create data as particle object
+                        ids = np.array(file[f'{CommonKey.particle_ids}'])
+                        types = np.array(file[f'{CommonKey.particle_types}'])
+                        diams = np.array(file[f'{CommonKey.particle_diameters}'])
+                        density_types = np.array(file[f'{CommonKey.density_types}'])
+                        rf = np.float64(file[f'{CommonKey.rescale_factor}'])
 
-        return data if len(data) > 1 else data[0]
+                        coords_frames = [np.array(file[f'{frame}/{FrameKey.particle_coordinates}']) 
+                                         for frame in selected_frame_ids]
+                        data_frames = [Particles(ids, types, diams, coords, density_types, rf) 
+                                       for coords in coords_frames]
+                    else:
+                        data_frames = [np.array(file[f'{frame}/{key}']) for frame in selected_frame_ids]
+                    data[key] = data_frames if len(data_frames) > 1 else data_frames[0]
+                else:
+                    data[key] = np.array(file[f'{key}'])
+        return data
     
     def print_keys(self) -> None:
         """Prints datakeys in HDF5 file"""
@@ -80,12 +95,13 @@ class DataReader:
             keys = file.keys()
             self.frames = [str(key) for key in sorted([int(key) for key in keys if key.isdigit()])]
             self.common_keys = list(keys - self.frames)
-            self.frame_keys = list(file[self.frames[0]].keys())
+            self.frame_keys = list(file[self.frames[0]].keys())+['particles']
+            print(self.frame_keys)
             self.frames = [int(frame) for frame in self.frames]
 
     def _check_keys(self, keys: str | list[str]) -> None:
         """Check if the provided keys are valid."""
-        valid_keys = self.common_keys + self.frame_keys
+        valid_keys = self.common_keys + self.frame_keys + ['particles']
         for key in keys:
             assert key in valid_keys, f'Sought key "{key}" is invalid. See class function print_keys() for readable keys.'
 

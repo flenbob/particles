@@ -77,8 +77,8 @@ class DataWriter:
                 
                 #Sort by Particle Identifier (ID) and write
                 attrs = attrs[attrs[:, 0].argsort(kind='stable')]
-                file.create_dataset(str(CommonKey.particle_ids), data=attrs[:, 0])
-                file.create_dataset(str(CommonKey.particle_types), data=attrs[:, 1])
+                file.create_dataset(str(CommonKey.particle_ids), data=attrs[:, 0].astype(int))
+                file.create_dataset(str(CommonKey.particle_types), data=attrs[:, 1].astype(int))
                 file.create_dataset(str(CommonKey.particle_diameters), data=attrs[:, 2])
                 #Frame dependent attributes
                 for frame in range(pipeline_global.source.num_frames):

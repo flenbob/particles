@@ -8,45 +8,9 @@ import numpy as np
 from ovito.io import import_file
 
 from .filename import FileName
-
-
-class Param(Enum):
-    """CSV-table parameter names"""
-    types_id = auto()
-    density = auto()
-    mass_fraction = auto()
-    mu = auto()
-    sigma = auto()
-    cv = auto()
-
-    def __str__(self):
-        return self.name
-    
-@dataclass
-class Particles:
-    """Packing particles data"""
-
-    ids: np.ndarray
-    type_ids: np.ndarray
-    diameters: np.ndarray
-    coordinates: np.ndarray = None
-    rescale_factor: float = None
-
-    def sort_by_diameters(self, order: str) -> None:
-        match order:
-            case 'ascending':
-                sorted_indicies = np.argsort(self.diameters)
-            case 'descending':
-                sorted_indicies = np.argsort(self.diameters)[::-1]
-            case _:
-                raise ValueError(f'Invalid sort order: {order}. Available are: "ascending", "descending".')
-            
-        #Sort
-        self.ids = self.ids[sorted_indicies]
-        self.type_ids = self.type_ids[sorted_indicies]
-        self.diameters = self.diameters[sorted_indicies]
-        if self.coordinates is not None:
-            self.coordinates = self.coordinates[sorted_indicies]
+from .content_uniformity import Stange
+from .table_params import Param
+from .particles import Particles
 
 @dataclass
 class CoordinatesGenerator:
@@ -391,30 +355,38 @@ class ParticlesGenerator:
     def generate_particles(self) -> Particles:
         """Samples particles (ids, type_ids and diameters)"""
 
-        #Calculate sample scale
-        N_particles_expected, volume_particles = self._calculate_required_scale()
+        #Calculate mass required for each comp
+        mass_comps = Stange().mass_given_cov_params(self.params)
+        mass_comps_max = mass_comps.max()
+
+        #Estimate number of particles to sample
+        E_D3 = np.exp(3*self.params[Param.mu]+9/2*self.params[Param.sigma]**2)
+        N_expected_comp = np.ceil((6*self.params[Param.mass_fraction]*mass_comps_max)/(np.pi*E_D3*self.params[Param.density])).astype(int)
+        N_expected_total = N_expected_comp.sum()
 
         #Sample particle diameters
-        N_components = self.params[Param.types_id].shape[0]
-        samples = np.random.lognormal(self.params[Param.mu], self.params[Param.sigma], (2*N_particles_expected, N_components))
-        counts = np.ones(N_components, dtype=int)
+        N_comps = self.params[Param.types_id].shape[0]
+        samples = np.random.lognormal(self.params[Param.mu], self.params[Param.sigma], (2*N_expected_total, N_comps))
+        counts = np.ones(N_comps, dtype=int)
 
         #Sample until solid particle volume is reached, and mass fraction error is low enough
-        d3_current = np.array([np.sum(samples[:counts[id], id]**3) for id in self.params[Param.types_id]-1])
+        rho = self.params[Param.density]
+        d3_current = np.array([(rho[id]*samples[:counts[id], id]**3).sum() for id in self.params[Param.types_id]-1])
         d3_total = np.sum(d3_current)
+        
         while True:
             #Identify component with highest mass fraction error
-            mf_curr = self.params[Param.density]*d3_current/np.sum(self.params[Param.density]*d3_current)
+            mf_curr = d3_current/np.sum(d3_current)
             mf_error = (self.params[Param.mass_fraction] - mf_curr)/self.params[Param.mass_fraction]
             i = np.argmax(mf_error)
 
             #Check exit condition
-            if np.all(np.abs(mf_error) < self.mass_fraction_error) and (np.pi/6*d3_total > volume_particles):
+            if np.all(np.abs(mf_error) < self.mass_fraction_error) and (d3_total > mass_comps_max):
                 break
 
             #Add sample to packing
             counts[i] += 1
-            d3_sample = samples[counts[i], i]**3
+            d3_sample = rho[i]*samples[counts[i], i]**3
             d3_current[i] += d3_sample
             d3_total += d3_sample
 
@@ -424,56 +396,37 @@ class ParticlesGenerator:
         type_ids = np.hstack(([np.full(counts[id], id+1) for id in self.params[Param.types_id]-1])).astype(int)
 
         #Normalize by smallest diameter
-        diameters = diameters/np.min(diameters)
+        rf = np.min(diameters)
+        diameters = diameters/rf
+        particles = Particles(ids, type_ids, diameters, density_types=rho, rescale_factor=rf)
 
-        #Return particles as particle object (without coordinates)
-        print(f"Sampled {diameters.shape[0]} particles given componentwise CVs: {self.params[Param.cv]}")
-        return Particles(ids, type_ids, diameters, rescale_factor=np.min(diameters))
+        #Check Stange COV given sampled particles
+        cov = Stange().cov_given_mass_particles(particles)
 
-    def _calculate_required_scale(self) -> tuple[int, float]:
-        """Use Stange to calculate total volume of particles and expected number of particles to satisfy input CV (Coefficient of Variation)"""
-        D63 = np.exp(3*self.params[Param.mu]+27/2*self.params[Param.sigma]**2)
-        volume_fraction_D = np.sum(self.params[Param.mass_fraction]/self.params[Param.density])
-        volume_fraction = self.params[Param.mass_fraction]/(self.params[Param.density]*volume_fraction_D)
-
-        #Sum over each component
-        N_components = self.params[Param.types_id].shape[0]
-        kappa = np.zeros(N_components, dtype=float)
-        mask = np.full(N_components, True)
-        for id in self.params[Param.types_id]-1:
-            mask_ = np.copy(mask)
-            mask_[id] = False
-            kappa[id] = (1-volume_fraction[id])**2/volume_fraction[id]*D63[id] + np.sum(volume_fraction[mask_]*D63[mask_])
-
-        #Solid particle volume required to satisfy cv (Stange)     
-        volume_particles = np.max(kappa/self.params[Param.cv]**2)
-
-        # Sample particles until the sought solid particle volume is reached
-        E_D3 = np.exp(3*self.params[Param.mu]+9/2*self.params[Param.sigma]**2) #Expected diameter cubed component-wise
-        N_comp = np.floor((6*volume_fraction*volume_particles)/(np.pi*E_D3)).astype(int)
-        N_particles_expected = np.sum(N_comp)
-        return N_particles_expected, volume_particles
+        #Return particles (without coordinates)
+        print(f"Total mass: {np.pi/6*d3_total:.2f} µg\nN particles: {diameters.shape[0]}\nStange COV component-wise prediction(s): {cov.T}")
+        return particles
 
     def _load_table_params(self) -> dict:
         """Loads CSV table and converts to dictionary with parameters"""
         table = np.loadtxt(self.table_path, delimiter=';', dtype=float)
-        assert table.shape[1] == 6, print(f'Provided table in {self.table_path} has too few columns. It requires 6 columns.')
+        assert table.shape[1] == 6, f'Provided table in {self.table_path} has too few columns. It requires 6 columns.'
 
         #Convert to parameter dictionary
         params = {Param.types_id: table[:, 0].astype(int),
                   Param.density: table[:, 1].astype(float),
                   Param.mass_fraction: table[:, 2].astype(float),
-                  Param.mu: table[:, 3].astype(float),
-                  Param.sigma: table[:, 4].astype(float),
+                  Param.mean: table[:, 3].astype(float),
+                  Param.std: table[:, 4].astype(float),
                   Param.cv: table[:, 5].astype(float)}
         
         #Rescale densities from kg/m^3 to yg/ym^3
-        params['density'] = params['density']*(1e-9)
+        params[Param.density]*= 1e-9
 
-        #Convert mean and std to mu and sigma
-        mu, sigma = params[Param.mu], params[Param.sigma]
-        params[Param.mu] = np.log(mu**2/(np.sqrt(mu**2+sigma**2)))
-        params[Param.sigma] = np.sqrt(np.log(1+sigma**2/mu**2))
+        #Calculate Lognormal distribution params LN(mu, sigma) that satisfy desired mean and std
+        mean, std = params[Param.mean], params[Param.std]
+        params[Param.mu] = np.log(mean**2/(np.sqrt(mean**2+std**2)))
+        params[Param.sigma] = np.sqrt(np.log(1+std**2/mean**2))
         return params
     
     def _check_params(self) -> None:
@@ -481,10 +434,10 @@ class ParticlesGenerator:
         assert np.array_equal(self.params[Param.types_id], np.arange(1, np.max(self.params[Param.types_id])+1)),\
               "Component ID:s should be provided as an array-like of consecutive integers starting from 1."
         assert (self.params[Param.density] > 0).all(), "Bulk densities must be positive."
-        assert np.abs(np.sum(self.params[Param.mass_fraction]) - 1) < 1e-3, "Mass fractions do not sum up to one (At least three decimal point precision)." 
+        assert np.abs(1 - np.sum(self.params[Param.mass_fraction])) < 1e-3, "Mass fractions do not sum up to one (At least three decimal point precision)." 
         assert (self.params[Param.mu] > 0).all(), "Expected diameter must be positive."
         assert (self.params[Param.sigma] > 0).all(), "Standard deviation must be positive."
-        assert (self.params[Param.cv]).all(), "Maximum coefficient variation (cv) must be positive."  
+        assert (self.params[Param.cv] > 0).all(), "Maximum coefficient variation (cv) must be positive."  
 
 @dataclass
 class Packing:
@@ -495,7 +448,6 @@ class Packing:
 
     #Constants
     initial_volume_fraction: float = 0.05
-    rescale_factor: float = None
     density_types: np.ndarray = None
 
     def generate_packing(self, table_path: Path) -> None:
@@ -504,8 +456,6 @@ class Packing:
         #Generate particles (ids, types, diameters)
         generator = ParticlesGenerator(table_path)
         self.particles = generator.generate_particles()
-        self.types_density = generator.params['density']
-        self.rescale_factor = self.particles.rescale_factor
 
         #Set simulation box width
         self.box_width = (np.pi/(6*self.initial_volume_fraction)*np.sum(self.particles.diameters**3))**(1/3)
