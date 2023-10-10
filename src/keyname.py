@@ -14,9 +14,9 @@ class FrameKey(str, Enum):
     volume = 'volume'
 
     def __str__(self):
-        return self.value
+        return str.__str__(self)
 
-class CommonKey(Enum):
+class CommonKey(str, Enum):
     """Names of common keys"""
     particle_ids = 'particle_ids'
     particle_types = 'particle_types'
@@ -27,4 +27,4 @@ class CommonKey(Enum):
     rescale_factor = 'rescale_factor' 
 
     def __str__(self):
-        return self.value
+        return str.__str__(self)

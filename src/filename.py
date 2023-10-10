@@ -1,6 +1,6 @@
 from enum import Enum
 
-class FileName(Enum):
+class FileName(str, Enum):
     """Sets the name of various files"""
     INPUT_FILE = 'input.txt'
     DATA_FILE = 'data.hdf5'
@@ -12,4 +12,4 @@ class FileName(Enum):
     LOG_FILE = 'log.lammps'
 
     def __str__(self):
-        return self.value
+        return str.__str__(self)

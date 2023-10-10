@@ -12,10 +12,13 @@ from .packing import Packing
 from .keyname import FrameKey, CommonKey
 
 
-class LAMMPSScript(Enum):
+class LAMMPSScript(str, Enum):
     """Names of selectable LAMMPS scripts"""
-    compression: str = 'in.compression.lmp'
-    two_phase: str = 'in.two_phase.lmp'
+    compression = 'in.compression.lmp'
+    two_phase = 'in.two_phase.lmp'
+
+    def __str__(self):
+        return str.__str__(self)
 
 @dataclass
 class Runner:

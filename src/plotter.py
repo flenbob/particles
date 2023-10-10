@@ -29,6 +29,7 @@ class Plotter:
             plt.plot(Z_vals, density, label=i+1)
         
         #Plot with logscale on x-axis
+        plt.title('Component-wise distributions')
         plt.ylabel('Density')
         plt.xlabel('Coordination number')
         plt.xscale('log')
@@ -82,7 +83,7 @@ class Plotter:
             im = ax.imshow(data, **kwargs)
 
             # Create colorbar
-            cbar = ax.figure.colorbar(ax.imshow(np.log10(data), **kwargs), ax=ax, format=ticker.FuncFormatter(fmt), **cbar_kw)
+            cbar = ax.figure.colorbar(ax.imshow(np.log10(data), **kwargs), ax=ax, fraction=0.046, pad=0.04, format=ticker.FuncFormatter(fmt), **cbar_kw)
             cbar.ax.set_ylabel(cbarlabel, rotation=-90, va="bottom")
 
             # Show all ticks and label them with the respective list entries.
@@ -169,7 +170,7 @@ class Plotter:
         #Componentwise contact occurences
         N_types = int(max(particle_types))
         contact_matrix = np.zeros((N_types, N_types))
-        for contact_pair in contact_pairs[0]:
+        for contact_pair in contact_pairs:
             I, J = int(particle_types[contact_pair[0]-1]), int(particle_types[contact_pair[1]-1])
             contact_matrix[I-1, J-1] += 1
             contact_matrix[J-1, I-1] += 1
@@ -178,25 +179,27 @@ class Plotter:
         component_Z_matrix = contact_matrix/types_cnt
 
         #Add color scale to matrix
-        fig, ax = plt.subplots()
-        im, cbar = heatmap(component_Z_matrix, np.arange(N_types)+1, np.arange(N_types)+1, ax=ax,
+        fig, ax = plt.subplots(nrows=1, ncols=2)
+        ax[0].set_title("Component-wise")
+        ax[1].set_title("Pair-wise")
+
+
+        im, cbar = heatmap(component_Z_matrix, np.arange(N_types)+1, np.arange(N_types)+1, ax=ax[0],
                         cmap="rainbow", cbarlabel="Coordination number")
         texts = annotate_heatmap(im, valfmt="{x:.1f}")
 
-        fig.tight_layout()
-        plt.show()
+        #fig.tight_layout()
 
         #Pairwise coordination number()
         cnt_matrix = types_cnt[np.newaxis, :] + types_cnt[:, np.newaxis]
         pair_Z_matrix = contact_matrix/cnt_matrix
         pair_Z_matrix[np.diag_indices_from(pair_Z_matrix)]*=2
-        
-        fig, ax = plt.subplots()
-        im, cbar = heatmap(pair_Z_matrix, np.arange(N_types)+1, np.arange(N_types)+1, ax=ax,
+    
+        im, cbar = heatmap(pair_Z_matrix, np.arange(N_types)+1, np.arange(N_types)+1, ax=ax[1],
                         cmap="rainbow", cbarlabel="Coordination number")
         texts = annotate_heatmap(im, valfmt="{x:.1f}")
 
-        fig.tight_layout()
+        #fig.tight_layout()
         plt.show()
 
     def plot_content_uniformity(self, cv_pred: COVPredictor, particles: Particles) -> None:

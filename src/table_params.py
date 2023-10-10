@@ -1,6 +1,6 @@
-from enum import Enum, auto
+from enum import Enum
 
-class Param(Enum):
+class Param(str, Enum):
     """CSV-table parameter names"""
     types_id = 'types_id'
     density = 'density'
@@ -12,4 +12,4 @@ class Param(Enum):
     cv = 'cv'
 
     def __str__(self):
-        return self.value
+        return str.__str__(self)
