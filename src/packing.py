@@ -1,6 +1,5 @@
 import math
 from dataclasses import dataclass, field
-from enum import Enum, auto
 from itertools import chain
 from pathlib import Path
 
@@ -358,53 +357,63 @@ class ParticlesGenerator:
         #Calculate mass required for each comp
         mass_comps = Stange().mass_given_cov_params(self.params)
         mass_comps_max = mass_comps.max()
-
+        
         #Estimate number of particles to sample
         E_D3 = np.exp(3*self.params[Param.mu]+9/2*self.params[Param.sigma]**2)
-        N_expected_comp = np.ceil((6*self.params[Param.mass_fraction]*mass_comps_max)/(np.pi*E_D3*self.params[Param.density])).astype(int)
+        N_expected_comp = np.ceil((6*self.params[Param.mass_fraction]*mass_comps_max)/\
+                                  (np.pi*E_D3*self.params[Param.density])).astype(int)
         N_expected_total = N_expected_comp.sum()
 
         #Sample particle diameters
         N_comps = self.params[Param.types_id].shape[0]
-        samples = np.random.lognormal(self.params[Param.mu], self.params[Param.sigma], (2*N_expected_total, N_comps))
+        samples = np.random.lognormal(self.params[Param.mu], 
+                                      self.params[Param.sigma], 
+                                      (2*N_expected_total, N_comps))
         counts = np.ones(N_comps, dtype=int)
 
         #Sample until solid particle volume is reached, and mass fraction error is low enough
         rho = self.params[Param.density]
-        d3_current = np.array([(rho[id]*samples[:counts[id], id]**3).sum() for id in self.params[Param.types_id]-1])
-        d3_total = np.sum(d3_current)
-        
+        m_current = np.array([np.pi/6*(rho[id]*samples[:counts[id], id]**3).sum() 
+                              for id in self.params[Param.types_id]-1])
+        m_total = np.sum(m_current)
         while True:
             #Identify component with highest mass fraction error
-            mf_curr = d3_current/np.sum(d3_current)
+            mf_curr = m_current/np.sum(m_current)
             mf_error = (self.params[Param.mass_fraction] - mf_curr)/self.params[Param.mass_fraction]
             i = np.argmax(mf_error)
 
-            #Check exit condition
-            if np.all(np.abs(mf_error) < self.mass_fraction_error) and (d3_total > mass_comps_max):
-                break
+            #Check exit condition (not too often though)
+            if counts[i] % 100 == 0:
+                if np.all(np.abs(mf_error) < self.mass_fraction_error) and (m_total > mass_comps_max):
+                    break
 
             #Add sample to packing
             counts[i] += 1
-            d3_sample = rho[i]*samples[counts[i], i]**3
-            d3_current[i] += d3_sample
-            d3_total += d3_sample
+            m_sample = np.pi/6*rho[i]*samples[counts[i], i]**3
+            m_current[i] += m_sample
+            m_total += m_sample
 
         #Set particle values
-        diameters = np.hstack(([samples[:counts[id], id] for id in self.params[Param.types_id]-1]))
+        diameters = np.hstack(([samples[:counts[id], id] 
+                                for id in self.params[Param.types_id]-1]))
         ids = np.arange(1, diameters.shape[0]+1, dtype=int)
-        type_ids = np.hstack(([np.full(counts[id], id+1) for id in self.params[Param.types_id]-1])).astype(int)
+        type_ids = np.hstack(([np.full(counts[id], id+1) 
+                               for id in self.params[Param.types_id]-1])).astype(int)
 
         #Normalize by smallest diameter
         rf = np.min(diameters)
         diameters = diameters/rf
-        particles = Particles(ids, type_ids, diameters, density_types=rho, rescale_factor=rf)
+        particles = Particles(ids = ids, 
+                              type_ids = type_ids,
+                              diameters = diameters, 
+                              density_types=rho, 
+                              rescale_factor=rf)
 
         #Check Stange COV given sampled particles
         cov = Stange().cov_given_mass_particles(particles)
 
         #Return particles (without coordinates)
-        print(f"Total mass: {np.pi/6*d3_total:.2f} µg\nN particles: {diameters.shape[0]}\nStange COV component-wise prediction(s): {cov.T}")
+        print(f"Total mass: {particles.mass_types.sum():.2f} µg\nN particles: {diameters.shape[0]}\nStange COV component-wise prediction(s): {cov.T}")
         return particles
 
     def _load_table_params(self) -> dict:
@@ -448,7 +457,6 @@ class Packing:
 
     #Constants
     initial_volume_fraction: float = 0.05
-    density_types: np.ndarray = None
 
     def generate_packing(self, table_path: Path) -> None:
         """Generates packing given input table"""
@@ -475,6 +483,11 @@ class Packing:
     
     def load_packing(self, file_path: Path) -> None:
         """Loads existing LAMMPS input file into packing object"""
+        #Read densities and rescale factor from header
+        with open(file_path, 'r') as f:
+            f.__next__()
+            densities = [float(dens) for dens in f.__next__().rstrip()[1:-1].split(', ')]
+            rf = float(f.__next__().rstrip()[1:-1])
 
         #Data reading pipeline
         pipeline = import_file(file_path, multiple_frames=False)
@@ -487,7 +500,9 @@ class Packing:
         self.particles = Particles(ids = np.array(data.particles['Particle Identifier'][:], dtype=int), 
                                    type_ids = np.array(data.particles['Particle Type'][:], dtype=int),
                                    diameters = np.array(data.particles['Radius'][:], dtype=float)*2,
-                                   coordinates = np.array(data.particles['Position'][:], dtype=float))
+                                   coordinates = np.array(data.particles['Position'][:], dtype=float),
+                                   density_types=np.array(densities),
+                                   rescale_factor=rf)
         
         #Sort particles ascending for collection intervals
         self.particles.sort_by_diameters(order='ascending')
@@ -501,9 +516,11 @@ class Packing:
         Args:
             path (Path): Relative path to file which will be written.
         """
+        densities_print = [f"{density:.10f}, " for density in self.particles.density_types]
         with open(path/FileName.INPUT_FILE.value, 'w') as file:
-            # Header
-            file.write(f'# LAMMPS file containing particle data \n\n')
+            file.write(f'# LAMMPS file containing particle data with densities and rescale factor:\n')
+            file.write(f'#{"".join(densities_print)} \n')
+            file.write(f'#{self.particles.rescale_factor}\n\n')
             file.write(f"{self.particles.diameters.shape[0]} atoms \n")
             file.write(f"{np.max(self.particles.type_ids).astype(int)} atom types \n")
             file.write(f"0 {self.box_width} xlo xhi \n")

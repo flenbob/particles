@@ -16,6 +16,8 @@ class DataWriter:
     """Handles reading of LAMMPS dumpfiles and writing them to a structured HDF5 file"""
     #Folder path to write/read
     folder_path: Path
+    rf: float 
+    density_types: np.ndarray
     data_path: Path = None
 
     def __post_init__(self):
@@ -25,14 +27,31 @@ class DataWriter:
     def write_hdf5(self) -> None:
         """Writes LAMMPS data to hdf5 file"""
         #Path to dumpfiles
-        global_path = self.folder_path/str(FileName.GLOBAL_FILE)
-        local_path = self.folder_path/str(FileName.LOCAL_FILE)
-        scalar_path = self.folder_path/str(FileName.SCALAR_FILE)
+        global_path = self.folder_path/FileName.GLOBAL_FILE
+        local_path = self.folder_path/FileName.LOCAL_FILE
+        scalar_path = self.folder_path/FileName.SCALAR_FILE
+        input_path = self.folder_path/FileName.INPUT_FILE
+        
+        #Write densities and rescale factor from LAMMPS input file        
+        with open(input_path, 'r') as f, \
+            h5py.File(self.data_path, 'a') as file:
+            f.__next__()
+            
+            #Component densities
+            densities = [float(dens) for dens in f.__next__().rstrip()[1:-1].split(', ')]
+            file.create_dataset(CommonKey.density_types, data=densities)
+            
+            #Diameter rescale factor
+            rf = float(f.__next__().rstrip()[1:-1])
+            file.create_dataset(CommonKey.rescale_factor, data=rf)
 
         #Write to data-file if dumpfile is found
-        self._write_global(global_path) if global_path.exists() else print(f'Could not find global file in: {global_path}')
-        self._write_local(local_path) if local_path.exists() else print(f'Could not find local file in: {local_path}')
-        self._write_scalar(scalar_path) if scalar_path.exists() else print(f'Could not find scalar file in: {scalar_path}')
+        self._write_global(global_path) if global_path.exists() \
+            else print(f'Could not find global file in: {global_path}')
+        self._write_local(local_path) if local_path.exists() \
+            else print(f'Could not find local file in: {local_path}')
+        self._write_scalar(scalar_path) if scalar_path.exists() \
+            else print(f'Could not find scalar file in: {scalar_path}')
 
     def _check_folder_path(self) -> None:
         """Check that selected folder is valid"""
@@ -67,19 +86,26 @@ class DataWriter:
             with h5py.File(self.data_path, 'a') as file:
                 #Read frame independent attributes from 0:th frame
                 data_global = pipeline_global.compute(0)
+                
+                #Rescale diameters to original values (ym)
                 diameters = data_global.particles['Diameter'][:]
+                
+                #Polydispersity
                 particle_volume = np.pi/6*np.sum(diameters**3)
                 polydispersity = np.max(diameters)/np.min(diameters)
                 file.create_dataset(str(CommonKey.polydispersity), data=polydispersity)
+                
+                #Particle identifiers
                 attrs = np.array([data_global.particles['Particle Identifier'][:], 
-                                data_global.particles['Particle Type'][:],
-                                diameters]).T
+                                  data_global.particles['Particle Type'][:],
+                                  diameters]).T
                 
                 #Sort by Particle Identifier (ID) and write
                 attrs = attrs[attrs[:, 0].argsort(kind='stable')]
-                file.create_dataset(str(CommonKey.particle_ids), data=attrs[:, 0].astype(int))
-                file.create_dataset(str(CommonKey.particle_types), data=attrs[:, 1].astype(int))
-                file.create_dataset(str(CommonKey.particle_diameters), data=attrs[:, 2])
+                file.create_dataset(CommonKey.particle_ids, data=attrs[:, 0].astype(int))
+                file.create_dataset(CommonKey.particle_types, data=attrs[:, 1].astype(int))
+                file.create_dataset(CommonKey.particle_diameters, data=attrs[:, 2])
+                
                 #Frame dependent attributes
                 for frame in range(pipeline_global.source.num_frames):
                     data_global = pipeline_global.compute(frame)
@@ -92,7 +118,8 @@ class DataWriter:
                     Z_nr = 0 if no_nonrattlers else np.mean(Z[Z >= 4])
                     file.create_dataset(f'{frame}/{FrameKey.Z_g}', data=float(Z_g))
                     file.create_dataset(f'{frame}/{FrameKey.Z_nr}', data=float(Z_nr))
-                                
+
+                    #Particle coordinates                                
                     attrs = np.array([data_global.particles['Particle Identifier'][:],
                                     data_global.particles['Position'][:, 0],
                                     data_global.particles['Position'][:, 1],

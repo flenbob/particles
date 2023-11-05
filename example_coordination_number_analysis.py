@@ -13,7 +13,6 @@ def coordination_number_matrix():
     # Default keynames are listed in Enums 'CommonKey' and 'FrameKey'.
     # Second argument specifies to read from the last frame (last timestep) of the simulation.
     reader = DataReader(path)
-    
     data = reader.get_data(selected_keys = [CommonKey.particle_types, FrameKey.contact_pairs], 
                            selected_frames = -1)
     

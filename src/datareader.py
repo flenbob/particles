@@ -57,11 +57,16 @@ class DataReader:
                         types = np.array(file[f'{CommonKey.particle_types}'])
                         diams = np.array(file[f'{CommonKey.particle_diameters}'])
                         density_types = np.array(file[f'{CommonKey.density_types}'])
-                        rf = np.float64(file[f'{CommonKey.rescale_factor}'])
+                        rescale_factor = np.array(file[f'{CommonKey.rescale_factor}'])
 
                         coords_frames = [np.array(file[f'{frame}/{FrameKey.particle_coordinates}']) 
                                          for frame in selected_frame_ids]
-                        data_frames = [Particles(ids, types, diams, coords, density_types, rf) 
+                        data_frames = [Particles(ids = ids, 
+                                                 type_ids = types, 
+                                                 diameters = diams, 
+                                                 coordinates = coords, 
+                                                 density_types = density_types,
+                                                 rescale_factor = rescale_factor) \
                                        for coords in coords_frames]
                     else:
                         data_frames = [np.array(file[f'{frame}/{key}']) for frame in selected_frame_ids]
@@ -96,7 +101,6 @@ class DataReader:
             self.frames = [str(key) for key in sorted([int(key) for key in keys if key.isdigit()])]
             self.common_keys = list(keys - self.frames)
             self.frame_keys = list(file[self.frames[0]].keys())+['particles']
-            print(self.frame_keys)
             self.frames = [int(frame) for frame in self.frames]
 
     def _check_keys(self, keys: str | list[str]) -> None:

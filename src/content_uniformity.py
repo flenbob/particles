@@ -5,7 +5,6 @@ from itertools import product
 
 import numpy as np
 from scipy.stats import truncnorm
-from scipy.optimize import minimize
 from scipy.spatial import cKDTree
 
 from .table_params import Param
@@ -15,37 +14,30 @@ from .particles import Particles
 class Stange:
     """Stange COV calculation given input PSD and total mass/volume"""
 
-    def cov_given_mass_particles(self, particles: Particles, G: np.ndarray=None) -> np.ndarray:
+    def cov_given_mass_particles(self, particles: Particles, G: float | np.ndarray = None) -> np.ndarray:
         """Estimates the Stange COV given mass of sampled particles
 
         Args:
             particles (Particles): Particles containing diameter, type ids, rescale factor 
-            G (np.ndarray, optional): Array of masses to estimate COV at. If not provided will estimate given total mass of provided particles. Defaults to None.
+            G (np.ndarray | float, optional): Float or Numpy-array of masses to estimate COV at. If not provided will estimate given total mass of provided particles. Defaults to None.
 
         Returns:
             np.ndarray: Estimated COV's
         """
-        #Types listed
-        types = np.unique(particles.type_ids).astype(int)-1
-
-        #Rescale factor
-        particles.diameters = particles.diameters*particles.rescale_factor
-
-        #Diameters by type
-        d_types = [particles.diameters[particles.type_ids == i+1] for i in types]
-    
-        #Calculate D63 moment ratio
-        D63 = np.array([sum(d_types[i]**6)/sum(d_types[i]**3) for i in types])
-
-        #Calculate typewise mass fractions
-        mass_types = np.array([particles.density_types[i]*sum(d_types[i]**3) for i in types])
-        mass_tot = mass_types.sum()
-        mf = mass_types/mass_tot
-        Gs = np.array([mass_tot]) if G is None else G
         
-        cov = np.zeros((types.shape[0], Gs.shape[0]))
-        for (i, tau_i, rho_i, D63_i) in zip(types, mf, particles.density_types, D63):
-            j = types[types != i]
+        #Calculate D63 moment ratio
+        D63 = np.array([(d_type**6).sum()/(d_type**3).sum() 
+                        for d_type in particles.diameter_types])
+        
+        #Calculate typewise mass fractions
+        mtypes = particles.mass_types
+        mtot = mtypes.sum()
+        mf = mtypes/mtot
+        Gs = np.array([mtot]) if G is None else np.array(G)
+        
+        cov = np.zeros((particles.types.shape[0], Gs.shape[0]))
+        for (i, tau_i, rho_i, D63_i) in zip(particles.types, mf, particles.density_types, D63):
+            j = particles.types[particles.types != i]
             a = np.pi/(6*Gs)
             b = (1-tau_i)**2/tau_i * rho_i * D63_i
             c = np.sum(mf[j] * particles.density_types[j] * D63[j])
@@ -76,14 +68,23 @@ class Stange:
             cov[i] = np.sqrt(a * (b + c))
         return cov
 
-    def mass_given_cov_params(self, params: dict[np.ndarray]) -> np.ndarray:
+    def mass_given_cov_params(self, params: dict[np.ndarray], cov: float | list | np.ndarray = None) -> np.ndarray:
         """Estimates component-wise masses [µg] required to satisfy input Stange COV"""
         #Unpack input params dict
         rho = params[Param.density]
         mf = params[Param.mass_fraction]
         mu = params[Param.mu]
         sigma = params[Param.sigma]
-        cov = params[Param.cv]
+        
+        #Number of components
+        n = mf.shape[0]
+        
+        #Check type of input cov
+        if cov is None:
+            cov = params[Param.cv]
+        if isinstance(cov, float):
+            cov = n*[cov]
+        assert len(cov) == n, f'Incorrect number of component-wise COV:s provided {len(cov)}, should be {n}.'
 
         #6:th and 3:rd moment of lognormal and moment ratio
         E_D6 = np.exp(6*mu+18*sigma**2)
@@ -91,7 +92,6 @@ class Stange:
         D63 = E_D6/E_D3
 
         #Component-wise COV
-        n = mf.shape[0]
         Gs = np.zeros((n,))
         indicies = np.array((range(n)))
         for (i, tau_i, rho_i, D63_i, cov_i) in zip(indicies, mf, rho, D63, cov):
@@ -130,32 +130,30 @@ class COVPredictor:
         #Estimate COV given data
         estimator = COVEstimator()
         cov_mean, cov_std, x_pts = estimator.fit_predict(X, Y)
-
-        # Calculate the cell mass
-        unique_ids = np.unique(self.particles.type_ids)
-        m_comps = np.array([np.pi/6*np.sum(self.particles.diameters[self.particles.type_ids==uq_id]**3) for uq_id in unique_ids])
-        mass = np.sum(self.particles.density_types*m_comps)
-
-        # Rescale x_pts and X_final to real units again 
-        x_pts = x_pts*self.particles.rescale_factor**3                #μm^3
-        mass = mass*self.particles.rescale_factor**3                  #μg
-
+       
+        #Remove first point
+        cov_mean = cov_mean[:, 1:]
+        cov_std = cov_std[:, 1:]
+        x_pts = x_pts[1:]
+        
+        #Total particle mass
+        mass = self.particles.mass_types.sum()
+        
         #Create data points up to the size of the entire cell
         self.x_pts = x_pts
         x_pts_contd = np.linspace(x_pts[-1], mass, estimator.Npred)
         self.x_pts_contd = x_pts_contd
 
         #Predict COV for each component
-        for i in range(len(unique_ids)):
+        for cov_m, cov_s in zip(cov_mean, cov_std):
             CF_mean = COVCurveFitter()
-            CF_mean.fit(x_pts, cov_mean[i,:], cov_std[i, :])
-
-            print(f"Params mean: {CF_mean.a, CF_mean.b}")
+            CF_mean.fit(x_pts, cov_m)
+            #print(f"Params mean: {CF_mean.a, CF_mean.b}")
 
             #Curve fit to produce std of COV prediction 
             CF_std = COVCurveFitter()
-            CF_std.fit(self.x_pts, cov_std[i, :], 1)
-            print(f"Params std: {CF_std.a, CF_std.b}")
+            CF_std.fit(self.x_pts, cov_s)
+            #print(f"Params std: {CF_std.a, CF_std.b}")
 
             #Curve predict available points + continued range on both mean and std
             CF_mean_pred = CF_mean.predict(x_pts)
@@ -177,18 +175,20 @@ class COVPredictor:
             upper_pred_contd = np.array([truncnorm.ppf(self.alpha/2, clip_ap[j], clip_bp[j], CF_mean_pred_contd[j], CF_std_pred_contd[j]) for j in range(Np)])
             lower_pred_contd = np.array([truncnorm.ppf(1-self.alpha/2, clip_ap[j], clip_bp[j], CF_mean_pred_contd[j], CF_std_pred_contd[j]) for j in range(Np)])
 
-            self.cov_mean.append(cov_mean[i,:])
-            self.cov_std.append(cov_std[i,:])
-
-            self.cov_mean_pred.append(CF_mean.predict(x_pts))
-            self.cov_mean_pred_contd.append(CF_mean.predict(x_pts_contd))
-
+            #Write to class variables
+            self.cov_mean.append(cov_m)
+            self.cov_std.append(cov_s)
+            
+            self.cov_mean_pred.append(CF_mean_pred)
+            self.cov_std_pred.append(CF_std_pred)
+            
             self.cov_upper_pred.append(upper_pred)
             self.cov_lower_pred.append(lower_pred)
+            
             self.cov_upper_pred_contd.append(upper_pred_contd)
+            self.cov_mean_pred_contd.append(CF_mean_pred_contd)
             self.cov_lower_pred_contd.append(lower_pred_contd)
-            self.cov_std_pred.append(CF_std_pred)
-                  
+                              
 class COVEstimator:
     """Allows to calculate the COV of mass fractions given sample mass"""
     def __init__(self, K: int=10, Npred: int=500):
@@ -211,9 +211,7 @@ class COVEstimator:
 
         # Set bandwidth from the average distance between data points
         delta = self._avg_delta(X)
-        #print(f"Delta : {delta}")
-        self.h = self.K*delta/(np.sqrt(-8*np.log(self.prop)))
-        #print(f"Bandwidth set : {self.h}")
+        self.h = self.K*delta/(np.sqrt(-8*np.log(self.prop)))    
         tau_estimate = self._nw_estimator_block(X, Y)
 
         # Std and mean across the FCC structure where VTOT is non-zero - i.e there are nothing sampled yet
@@ -225,7 +223,6 @@ class COVEstimator:
         COV_mean = np.nanmean(COV_raw, axis = 0)
         COV_std = np.nanstd(COV_raw, axis = 0, ddof = 1)
         
-        #return values
         return COV_mean.T, COV_std.T, X0
 
     def _avg_delta(self, X: np.ndarray) -> float:
@@ -256,14 +253,15 @@ class COVEstimator:
     def _nw_inner(self, X: np.ndarray, Y: np.ndarray) -> np.ndarray:
         """Nadaraya-Watson inner function"""
         # I is no Radii, J is components
-        I, J = np.shape(Y)
-        N = np.shape(self.X0)[0]
+        I, J = Y.shape
+        N = self.X0.shape[0]
         MX = np.zeros((N, J), dtype = float)
         D = 1/(self.h*math.sqrt(2*math.pi))
+        
         for n in range(N):
             # Over prediction points
             x0 = self.X0[n]
-            K = 1/(2*self.h**2)*(X-x0)**2
+            K = 1/(2*self.h**2)*(X-x0)**2      
             Kh = D*np.exp(-K)
             Sx = np.sum(Kh)
             if Sx == 0:
@@ -299,35 +297,21 @@ class COVEstimator:
         return tau_estimate
 
 class COVCurveFitter:
-    """Fits power-law function of type f(x) = a/x^b to COV data."""
-    #The assumption that the sampled data is power-law is strongly supported
+    """Fits power-law function of type f(x) = a*x^b to COV data."""
+    #The assumption that the sampled data is power-law distributed is strongly supported
     # by looking at a log-log plot of the datapoints, showing almost perfect linear correlation
-
     def __init__(self):
-        # Parameters used for the curve fitting
         self.a: float
         self.b: float
-
-    def predict(self, x: np.ndarray) -> np.ndarray:
-        return self.a/x**(self.b)
     
-    def fit(self, X: np.ndarray, Y: np.ndarray, SY: np.ndarray, verbose = False):
-        # Generic fit function
-        def _loss(p0):
-            residuals = (Y - p0[0]/X**p0[1])**2
-            weights = X**3/SY
-            return (residuals*weights).sum()
-        
-        # Initial guesses
-        b = 1/2
-        a = np.sum(X**3*Y/(SY*X**b))/np.sum(X**3/(SY*X**(2*b)))
-
-        # Minimize in both
-        min_both = minimize(_loss, x0 = [a, b], method='Nelder-Mead', tol=1e-6, options = {'maxiter': 20000}, bounds = ((0, None), (0, None)))
-        params = min_both.x
-        self.a, self.b =  params[0], params[1]
-        if verbose:
-            print(min_both.message)
+    def predict(self, x: np.ndarray) -> np.ndarray:
+        return self.a*x**(self.b)
+    
+    def fit(self, X: np.ndarray, Y: np.ndarray) -> None:
+        #Fit parameters using least squares
+        A = np.vstack([np.log(X), np.ones(len(X))]).T
+        b, a = np.linalg.lstsq(A, np.log(Y), rcond=None)[0]
+        self.a, self.b = np.exp(a), b
     
 @dataclass
 class CSSMDataGenerator:
@@ -350,65 +334,57 @@ class CSSMDataGenerator:
     n_types: int = field(init=False, repr=False)
     PV: np.ndarray = field(init=False, repr=False)
     
-    def __post_init__(self):
+    def __post_init__(self):        
         #Number of types (components) in packing
-        self.n_types = int(self.particles.type_ids.max())
-
-        # Maximum particle radius
-        self.r_max = 1/2*self.particles.diameters.max()
-
-        # Number of center coordinates in fcc structure
-        self.n_centers = self.n_fcc**3+3*(self.n_fcc-1)**2*self.n_fcc
-
-        self.PV = self._calculate_pv_outer(self.n_workers)
-
-    def generate_by_mass(self) -> tuple[np.ndarray, np.ndarray]:
+        self.n_types = self.particles.types.shape[0]
+        
         #Check provided densities
         assert len(self.particles.density_types) == self.n_types, f'M densities {self.particles.density_types} do not correspond to the number of types {self.n_types}.'
         assert self.particles.density_types.all() > 0, 'M densities must be positive.'
+        
+        #Rescale so smallest diameter is 1 in this case
+        self.particles.diameters = self.particles.diameters/self.particles.diameters.min()         
 
-        #4D matrices used as data containers. 
-        # For each shift, shell, fcc center coordinate and type, calculate:
-        # - mass
-        # - total mass
-        # - mass fractions 
-        M = np.zeros((self.n_shift, 
-                      self.n_shells, 
-                      self.n_centers, 
-                      self.n_types), dtype = float)
-        MTOT = np.zeros((self.n_shift, 
-                         self.n_shells, 
-                         self.n_centers), dtype = float)
-        MFR = np.zeros((self.n_shift, 
-                        self.n_shells, 
-                        self.n_centers, 
-                        self.n_types), dtype = float)
+        #Maximum particle radius
+        self.r_max = 1/2*self.particles.diameters.max()
 
-        #Total mass and mass fractions
-        for i in range(self.n_shift):
-            # For each shift
-            for j in range(self.n_shells):
-                # For each shell
-                for k in range(self.n_centers):
-                    # For each center coordinate
-                    # Calculate individual Mes
-                    M[i, j, k, :] = np.multiply(self.PV[i, : , k, j], self.particles.density_types)
+        #Number of center coordinates in fcc structure
+        self.n_centers = self.n_fcc**3+3*(self.n_fcc-1)**2*self.n_fcc
 
-                    # Calculate the total M - summing across components
-                    MTOT[i, j, k] = np.sum(M[i, j, k, :])
+        #Calculate particle volumes for each type, center-coord, shell and shift
+        self.PV = self._calculate_pv_outer(self.n_workers)
 
-                    # Calculate M fractions
-                    if MTOT[i, j, k] == 0:
-                        MFR[i, j, k, :] = 1/self.n_types
-                    else: 
-                        MFR[i, j, k, :] = M[i, j, k, :]/MTOT[i, j, k]
+    def generate_by_mass(self) -> tuple[np.ndarray, np.ndarray]:
+        """Generates CSSM data by mass, i.e. obervations of masses and mass fractions
+        given different shift vectors, radial shells, fcc center coordinates and component. 
 
-        return MTOT, MFR
+        Returns:
+            tuple[np.ndarray, np.ndarray]: CSSM data
+        """
+        #Mass fraction observations 
+        mass_fractions = np.zeros((self.n_shift, 
+                                   self.n_shells, 
+                                   self.n_centers, 
+                                   self.n_types), dtype = float)
+
+        #Calculate masses
+        masses = self.particles.rescale_factor**3*self.PV*self.particles.density_types
+        
+        #Total masses
+        mass_total = np.sum(masses, axis=3)
+        
+        #Calculate mass fractions
+        mask0 = mass_total == 0
+        mask = mass_total != 0
+        mass_fractions[mask0] = 1/self.n_types
+        mass_fractions[mask] = masses[mask] / mass_total[mask, np.newaxis]
+        return mass_total, mass_fractions
     
     def _generate_fcc_coordinates(self) -> tuple[np.ndarray, float]:
-        """Generates the necessary sampling shell structure"""
+        """Generates the necessary sampling shell structure using fcc crystal structure
+        (to maximise covered volume of the non-overlapping concentric shells within the cubic cell.)"""
         #Set length by minimum sidelength of the cell
-        l = min([self.cell_matrix[0,0], self.cell_matrix[1, 1], self.cell_matrix[2,2]])
+        l = min([self.cell_matrix[0, 0], self.cell_matrix[1, 1], self.cell_matrix[2, 2]])
 
         #Outer shell radius
         l_max = l/(2*np.sqrt(2)*(self.n_fcc-1) + 2)
@@ -483,7 +459,7 @@ class CSSMDataGenerator:
         Returns:
             _type_: _description_
         """
-        #Distance to particles from shell center
+        # Distance to particles from shell center
         d = np.linalg.norm(coords - center_k, axis=1)
 
         #Distance to outer edge of each particle from shell center
@@ -502,6 +478,9 @@ class CSSMDataGenerator:
         n_shells = r_shells.shape[0]
         PV_shell = np.empty(shape=(n_shells,), dtype=float)
         for l, r_shell in enumerate(r_shells):
+            # If m is empty there are no particles left to check
+            if m.shape[0] == 0:
+                return PV_shell
             #Catch if shell is entirely within a particle (occurs for small shell radii)
             if (r_shell+d<r).any():
                 PV_shell[l] = 4*np.pi/3*r_shell**3
@@ -540,20 +519,23 @@ class CSSMDataGenerator:
         # Radial shells with shell width dr
         self.r_shells = np.arange(self.dr, self.l_max, self.dr)
         self.n_shells = self.r_shells.shape[0]
-
+        
         # Generate random, uniformly sampled points within the cell
         T = np.random.uniform(low = 0, high = 1, size = (self.n_shift, 3))
         shift_vectors = T@H
 
         #Particle volume for each shell center, shell size and type
-        PV = np.zeros((self.n_shift, self.n_types, self.n_centers, self.n_shells), dtype = float)
+        PV = np.zeros((self.n_shift, 
+                      self.n_shells, 
+                      self.n_centers, 
+                      self.n_types), dtype = float)
 
         # Index in order i, j, k, l
         with Pool(n_workers) as pool:
-            for i in range(self.n_types):
+            for l in range(self.n_types):
                 #Typewise (component) KD-trees
-                print(f"Concentric shells on component {i+1}")
-                ids = (self.particles.type_ids==i+1)
+                print(f"Concentric shells on component {l+1}")
+                ids = (self.particles.type_ids==l+1)
                 coords = self.particles.coordinates[ids, :]
                 diams = self.particles.diameters[ids]
 
@@ -569,7 +551,7 @@ class CSSMDataGenerator:
 
                 #Construct KD Tree of coordinates for efficient neighbor-searching
                 tree = cKDTree(coords_uw)
-                for j, shift_vector in enumerate(shift_vectors):
+                for i, shift_vector in enumerate(shift_vectors):
                     #Generate center coordinates for given particle type
                     coords_K = origin + fcc_coords + shift_vector
                     tree_IDs = tree.query_ball_point(coords_K, self.l_max+self.r_max, workers=n_workers)
@@ -585,5 +567,5 @@ class CSSMDataGenerator:
                                     zip(coords_uw_K, r_uw_K, r_shells_K, coords_K)))
      
                     for k in range(self.n_centers):
-                        PV[j, i, k, :] = PV_list[k]
+                        PV[i, :, k, l] = PV_list[k]
         return PV

@@ -3,10 +3,7 @@ from pathlib import Path
 
 from src import LAMMPSScript, Runner
 
-
 def parser():
-    #TODO: Add support for reading restart file together with adhesion script
-
     """Parses arguments for a simulation given an existing LAMMPS formatted packing file.
     """
     parser = argparse.ArgumentParser()

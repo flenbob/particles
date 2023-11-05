@@ -7,11 +7,29 @@ class Particles:
     ids: np.ndarray
     type_ids: np.ndarray
     diameters: np.ndarray
+    density_types: np.ndarray
+    rescale_factor: float
     coordinates: np.ndarray = None
-    density_types: np.ndarray = None 
-    rescale_factor: float = 1
-
+    
+    @property 
+    def types(self) -> np.ndarray:
+        return np.unique(self.type_ids).astype(int)-1
+    
+    @property
+    def diameter_types(self) -> list[np.ndarray]:
+        rf = self.rescale_factor if (self.diameters.min() < 1.1) else 1
+        return [rf*self.diameters[self.type_ids == t+1] for t in self.types] 
+    
+    @property
+    def volume_types(self) -> np.ndarray:
+        return np.pi/6*np.array([(d_type**3).sum() for d_type in self.diameter_types])
+        
+    @property
+    def mass_types(self) -> np.ndarray:
+        return np.pi/6*self.density_types*np.array([(d_type**3).sum() for d_type in self.diameter_types])
+        
     def sort_by_diameters(self, order: str) -> None:
+        """Sort particles by diameters in ascending/descending order"""
         match order:
             case 'ascending':
                 sorted_indicies = np.argsort(self.diameters)

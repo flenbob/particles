@@ -17,7 +17,6 @@ class Plotter:
             particle_types (np.ndarray): 1D array of particle type for each particle.
             particle_contacts (np.ndarray): 1D array number of contacts for each particle.
         """
-        #Read contact data
 
         #Componentwise contact lists
         contact_list = [particle_contacts[particle_types == i] for i in range(1, int(max(particle_types))+1)]
@@ -203,8 +202,8 @@ class Plotter:
         plt.show()
 
     def plot_content_uniformity(self, cv_pred: COVPredictor, particles: Particles) -> None:
-        # Cov predictor is already fitted to data
-        # Stange has been set to either mass or volume
+        """Plot content uniformity summary statistics given particles and 
+        a COV predictor already fitted to the CSSM data."""
 
         # Get fitting and prediction range
         X0, Xp = cv_pred.x_pts, cv_pred.x_pts_contd
@@ -227,8 +226,9 @@ class Plotter:
         Y0_stange = Stange().cov_given_mass_particles(particles, X0)
         Yp_stange = Stange().cov_given_mass_particles(particles, Xp)
 
-        Ncomps = np.shape(Y0)[0]
-        for i in range(Ncomps):
+        # Plot summary CU statistics for each component
+        for i in particles.types:
+            plt.figure(i)
             # Plot in a single window
             axs1 = plt.subplot(2, 2, 1)
             axs2 = plt.subplot(2, 2, 2)
@@ -238,9 +238,8 @@ class Plotter:
             axs1.set_title("COV of CSSM data and curvefit")
 
             # Plot original data
-            # Cut such that Stange < 0.2
-            ind = Y0_stange[i, :] < 0.2
-            axs1.plot(X0[ind], Y0[i][ind], color = "k", label = "Raw data")
+            ind = Y0_stange[i, :] < np.inf
+            axs1.plot(X0[ind], Y0[i][ind], color = "k", label = "CSSM data")
             axs1.plot(X0[ind], Y0[i][ind] + 1.96*sY0[i][ind], color = 'k', linestyle = 'dashed')
             axs1.plot(X0[ind], Y0[i][ind] - 1.96*sY0[i][ind], color = 'k', linestyle = 'dashed')
 
@@ -254,26 +253,22 @@ class Plotter:
             axs2.set_title("STD of COV of CSSM data and curvefit")
 
             # Plot the cov std data and its fit
-            axs2.plot(X0, sY0[i], color = "k", label = "Std data")
+            axs2.plot(X0, sY0[i], color = "k", label = "Std CSSM data")
             axs2.plot(X0, sY0p[i], color = "b", label = "Std fit")
 
             # Axs 3: 
-            axs3.set_title("COV of CSSM data and curvefit over entire range")
+            axs3.set_title("COV of CSSM data and curvefit over entire range of masses.")
 
             # Plot fit prediction and Stange on continuation range
             axs3.plot(Xp, Yp[i], color = "b", label = "Prediction")
             axs3.plot(Xp, upper_p[i], color = 'b', linestyle = 'dashed')
             axs3.plot(Xp, lower_p[i], color = 'b', linestyle = 'dashed')
+            
             axs3.plot(Xp, Yp_stange[i, :], color = "r", label = "Stange")
-
-            # Misc.
-            axs1.set_ylabel("Cv")
-            axs1.set_ylabel("Std")
-            axs3.set_ylabel("Cv")
 
             xlab = 'Total mass [μg]'
             axs1.set_xlabel(xlab)
-            axs1.set_xlabel(xlab)
+            axs2.set_xlabel(xlab)
             axs3.set_xlabel(xlab)
 
             axs1.legend()
@@ -285,7 +280,9 @@ class Plotter:
             axs3.set_yscale('log')
 
             axs1.set_ylabel('COV')
-            axs2.set_ylabel('COV')
+            axs2.set_ylabel('STD')
             axs3.set_ylabel('COV')
-            plt.suptitle(f"Component {i+1}, CV/STD wrt. mass[{xlab}]")
-            plt.show()
+            plt.suptitle(f"Component {i+1}, COV/STD given {xlab}")
+            
+        #Plot all Ncomps at once
+        plt.show()

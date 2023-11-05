@@ -3,7 +3,6 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
-import numpy as np
 import h5py
 
 from .datawriter import DataWriter
@@ -36,6 +35,7 @@ class Runner:
             folder_path (Path, optional): Path identifier to write LAMMPS files to. If not provided, it is given its own folder in ./simulations/data/ID. Defaults to None.
             screen (bool, optional): Suppresses LAMMPS output to screen and only write to log-file. Defaults to False.
         """
+        
         #Input table path
         table_path = Path(Path.cwd())/'input_tables'/table
         assert table_path.exists(), f"Path to input table {table_path} is not valid."
@@ -59,12 +59,9 @@ class Runner:
         self._initialize_lammps_script(collection_intervals, n_tasks, screen)
 
         #Convert LAMMPS dumpfiles to HDF5 file
-        DataWriter(self.folder_path).write_hdf5()
-
-        #Also write rescale factor and densities of each type to hdf5 file
-        with h5py.File(self.folder_path/FileName.DATA_FILE.value, 'a') as file:
-            file.create_dataset(f'{CommonKey.rescale_factor}', data=float(packing.particles.rescale_factor))
-            file.create_dataset(f'{CommonKey.density_types}', data=packing.particles.density_types)
+        DataWriter(self.folder_path, 
+                   packing.particles.rescale_factor,
+                   packing.particles.density_types).write_hdf5()
             
     def run_existing(self, script: str, packing_path: Path, n_tasks: int, screen: bool = False) -> None:
         """Runs a complete simulation on existing LAMMPS formatted packing file
@@ -96,11 +93,6 @@ class Runner:
 
         #Convert LAMMPS dumpfiles to HDF5 file
         DataWriter(self.folder_path).write_hdf5()
-
-        #Also write rescale factor and densities of each type to hdf5 file
-        with h5py.File(self.folder_path, 'a') as file:
-            file.create_dataset(f'{CommonKey.rescale_factor}', data=float(packing.particles.rescale_factor))
-            file.create_dataset(f'{CommonKey.density_types}', data=float(packing.particles.density_types))
 
     def _set_script(self, script: str) -> None:
         """Selects type of LAMMPS script to run
@@ -145,7 +137,8 @@ class Runner:
             self.folder_path = folder_path
      
     def _initialize_lammps_script(self, collection_intervals: list[int | float], n_tasks: int, screen: bool = False) -> None:
-        print(f'Running LAMMPS script.{f" Screen output is suppressed, view progress in logfile: {self.folder_path}/log.lammps" if not screen else ".."}')
+        print(f'Running LAMMPS script.\
+              {f" Screen output is suppressed, view progress in logfile: {self.folder_path}/log.lammps" if not screen else ".."}')
         os.system(f'mpirun -np {n_tasks} lmp '\
               f'-v input_data "{self.folder_path/FileName.INPUT_FILE.value}" '\
               f'-v dump_global "{self.folder_path/FileName.GLOBAL_FILE.value}" '\
