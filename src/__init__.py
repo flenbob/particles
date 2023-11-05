@@ -1,8 +1,13 @@
 from .content_uniformity import (Stange, CSSMDataGenerator, 
                                  COVCurveFitter, COVEstimator, 
                                  COVPredictor)
+
+#To handle following conflict (between OVITO and matplotlib):
+# "QWidget: Cannot create a QWidget without QApplication".
+# , see more at https://matsci.org/t/compatibility-issue-between-python-ovito-library-and-matplotlib/50794
 import os
-os.environ['OVITO_GUI_MODE'] = '1'
+os.environ['OVITO_GUI_MODE'] = '1'      
+
 from .datareader import DataReader
 from .datawriter import DataWriter
 from .filename import FileName
