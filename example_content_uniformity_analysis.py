@@ -2,8 +2,6 @@ from pathlib import Path
 from src import ParticlesGenerator, Stange, CSSMDataGenerator, \
                 COVPredictor, Plotter, FrameKey, DataReader
 
-from src import Packing
-
 def main():
     print('Content uniformity using Stange example...')
     content_uniformity_stange()
@@ -97,13 +95,6 @@ def content_uniformity_summary():
     # 3: COV of CSSM data and curvefit + CI:s over entire range of masses. The range is limited
     #   , to the total mass of the entire packing. Dashed lines reprensets upper and lower 95% CI:s.
     Plotter().plot_content_uniformity(predictor, particles)
-    
-def test():
-    path = Path('/home/fivan/particles/simulations/data/11/input.txt')
-    packing = Packing()
-    packing.load_packing(path)
-    print(packing.particles.mass_types.sum())
-    print(packing.particles.ids.shape[0])
     
 if __name__ =="__main__":
     main()
