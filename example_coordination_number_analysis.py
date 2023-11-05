@@ -2,13 +2,7 @@ from pathlib import Path
 
 from src import Plotter, DataReader, FrameKey, CommonKey
 
-def main():
-    print('Coordination number matrix example...')
-    coordination_number_matrix()
-
-    print('Coordination number distributions matrix example...')
-    coordination_number_distributions()
-
+#Some code displaying how to analyze coordination number statistics of a given packing 
 def coordination_number_matrix():
     """Example of how to generate Z-matrix"""
     
@@ -46,4 +40,8 @@ def coordination_number_distributions():
                                   data[FrameKey.particle_contacts])
 
 if __name__ == "__main__":
-    main()
+    print('Coordination number matrix example...')
+    coordination_number_matrix()
+
+    print('Coordination number distributions matrix example...')
+    coordination_number_distributions()
