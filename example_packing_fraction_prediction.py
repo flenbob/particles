@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from src import Plotter, DataReader, FrameKey, CommonKey, Packing, ParticlesGenerator, LinearMixturePackingModel
+from src import Packing, ParticlesGenerator, LinearMixturePackingModel
 
 #An example showing how the jammed packing fraction 
 # (for frictionless spherical polydisperse particles)
@@ -23,7 +23,6 @@ def packing_fraction_given_table():
                                      particles.type_ids)
     pf = lmpm.predict_packing_fraction()
     print(f'Predicted packing fraction given table: {100*pf:.5f}%')
-
 
 def packing_fraction_given_file():
     #Path to packing file, same file as the one used as input to LAMMPS script
