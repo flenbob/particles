@@ -366,8 +366,8 @@ class CSSMDataGenerator:
                                    self.n_shells, 
                                    self.n_centers, 
                                    self.n_types), dtype = float)
-
-        #Calculate masses
+        
+        #Calculate masses (use rescale factor to get correct units)
         masses = self.particles.rescale_factor**3*self.PV*self.particles.density_types
         
         #Total masses
