@@ -17,6 +17,7 @@ class CoordinatesGenerator:
 
     diameters: np.ndarray
     collection_intervals: list[float]
+    r: int = field(default=10, repr=False)
     initial_volume_fraction: float = 0.05
     box_width: float = field(default_factory=float, init=False)
 
@@ -52,8 +53,8 @@ class CoordinatesGenerator:
         #Calculate (orthogonal) box width given initial volume fraction
         self.box_width = (np.pi/(6*self.initial_volume_fraction)*np.sum(self.diameters**3))**(1/3)
 
-        #Divide simulation cell into 5 subcells (note: this is highly optimizeable, a lazy solution was done here)
-        self.N_cells = int(self.box_width/5)
+        #Divide simulation cell into N_cells using some parameter r
+        self.N_cells = int(self.box_width/self.r)
         self.L_cells = self.box_width/self.N_cells
 
         #Arrange particles by levels corresponding to provided collection intervals
@@ -157,13 +158,16 @@ class CoordinatesGenerator:
         
         diff = (d_ + self.diameters_levels[i_][0])/2
 
-        x_hi = min(int(math.ceil((c[0] + diff)/self.L_cells)), self.N_cells)     
+        x_hi = min(int(math.ceil((c[0] + diff)/self.L_cells)), 
+                   self.N_cells)     
         x_lo = int(math.floor((c[0]-diff)/self.L_cells)) - 1              
 
-        y_hi = min(int(math.ceil((c[1] + diff)/self.L_cells)), self.N_cells)
+        y_hi = min(int(math.ceil((c[1] + diff)/self.L_cells)), 
+                   self.N_cells)
         y_lo = int(math.floor((c[1]-diff)/self.L_cells)) - 1
 
-        z_hi = min(int(math.ceil((c[2] + diff)/self.L_cells)), self.N_cells)  
+        z_hi = min(int(math.ceil((c[2] + diff)/self.L_cells)), 
+                   self.N_cells)  
         z_lo = int(math.floor((c[2]-diff)/self.L_cells)) - 1
         return [x_lo, x_hi, y_lo, y_hi, z_lo, z_hi]
 
@@ -181,8 +185,10 @@ class CoordinatesGenerator:
         """
         for id in ids:
             D = self.diameters_levels[i_][id]
-            euclidean = (c[0]-self.xcoords_levels[i_][id])**2+(c[1]-self.ycoords_levels[i_][id])**2+(c[2]-self.zcoords_levels[i_][id])**2
-            #print(type(euclidean))
+            euclidean = (c[0] - self.xcoords_levels[i_][id])**2+\
+                        (c[1] - self.ycoords_levels[i_][id])**2+\
+                        (c[2] - self.zcoords_levels[i_][id])**2
+            
             if((D+d_)**2 > euclidean):
                 return True
         return False
@@ -219,12 +225,16 @@ class CoordinatesGenerator:
         return False
 
     def _check_diameters(self):
-        """Checks that diameters are sorted descending"""  
-        assert np.array_equal(self.diameters, np.sort(self.diameters)[::-1]), f'Diameters must be sorted descending to generate coordinates correctly.'
+        """Checks that diameters are sorted descending"""
+        self.diameters = np.sort(self.diameters)[::-1]
+        #assert np.array_equal(self.diameters, np.sort(self.diameters)[::-1]), f'Diameters must be sorted descending to generate coordinates correctly.'
     
     def _check_collection_intervals(self):
         """Checks that collection intervals are ordered descending and are within diameter range"""
-        assert np.array_equal(self.collection_intervals, np.sort(self.collection_intervals)[::-1]), f'Collection intervals must be sorted descending to generate coordinates correctly.'
+        #Sort descending
+        self.collection_intervals = np.sort(self.collection_intervals)[::-1]
+
+        #assert np.array_equal(self.collection_intervals, np.sort(self.collection_intervals)[::-1]), f'Collection intervals must be sorted descending to generate coordinates correctly.'
         assert max(self.collection_intervals) - np.max(self.diameters) < 1e-1, f'Upper collection interval does not correspond to largest particle diameter.'
         assert min(self.collection_intervals) > np.min(self.diameters), f'Lower collection interval is smaller than smallest particle diameter.'
 
@@ -236,8 +246,10 @@ class CollectionIntervalGenerator:
     box_width: float = field(default_factory=float, init=False)
 
     def __post_init__(self):
-        #Check sort order
-        assert np.array_equal(self.diameters, np.sort(self.diameters)), f'Diameters must be sorted ascending to generate collection intervals correctly.'
+        #Sort diameters
+        self.diameters = np.sort(self.diameters)
+
+        # assert np.array_equal(self.diameters, np.sort(self.diameters)), f'Diameters must be sorted ascending to generate collection intervals correctly.'
 
         #Calculate (orthogonal) box width given initial volume fraction
         self.box_width = (np.pi/(6*self.initial_volume_fraction)*np.sum(self.diameters**3))**(1/3)
@@ -457,6 +469,9 @@ class Packing:
 
     #Constants
     initial_volume_fraction: float = 0.05
+    def __post_init__(self) -> None:
+        #If particles are provided at init, set box width
+        self.box_width = (np.pi/(6*self.initial_volume_fraction)*np.sum(self.particles.diameters**3))**(1/3)
 
     def generate_packing(self, table_path: Path) -> None:
         """Generates packing given input table"""
