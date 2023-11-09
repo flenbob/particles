@@ -243,7 +243,7 @@ class CoordinatesGeneratorParallell:
     """Samples coordinates of non-overlapping particles inside a cell using multigrid method, work being distributed."""
 
     # Fields that aren't thread specific
-    Ndivs = 4
+    Ndivs = 3
     diameters: np.ndarray
     collection_intervals: list[float]
     r: int = field(default=5, repr=False)
@@ -482,6 +482,7 @@ class CoordinatesGeneratorParallell:
                     shift[ind:ind+Nelems[i+j+k], 0] = self.box_width_subs*i
                     shift[ind:ind+Nelems[i+j+k], 1] = self.box_width_subs*j
                     shift[ind:ind+Nelems[i+j+k], 2] = self.box_width_subs*k
+                    ind += Nelems[i+self.Ndivs(j + self.Ndivs*k)]
 
         coordinates = np.concatenate(coords_raw_list) + shift        
         return coordinates
