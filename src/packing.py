@@ -243,7 +243,7 @@ class CoordinatesGeneratorParallell:
     """Samples coordinates of non-overlapping particles inside a cell using multigrid method, work being distributed."""
 
     # Fields that aren't thread specific
-    Ndivs = 3
+    Ndivs = 10
     diameters: np.ndarray
     collection_intervals: list[float]
     r: int = field(default=5, repr=False)
@@ -253,26 +253,16 @@ class CoordinatesGeneratorParallell:
     no_subs : int =  field(default=Ndivs, repr=False) 
     tot_no_subs : int = field(default=Ndivs**3, repr=False)
 
-    #Cell container in for each axis
-    CellGrid = list[list[list[int]]]
-    xcells_levels: CellGrid = field(repr=False, init=False)
-    ycells_levels: CellGrid = field(repr=False, init=False)
-    zcells_levels: CellGrid = field(repr=False, init=False)
-
-    #Particle coordinate container for each axis and level and subs
-    AxisLevel = list[list[float]]
-    xcoords_levels: AxisLevel = field(repr=False, init=False)
-    ycoords_levels: AxisLevel = field(repr=False, init=False)
-    zcoords_levels: AxisLevel = field(repr=False, init=False)
-
     #Particle diameters and number of particles per level
-    diameters_levels: AxisLevel = field(repr=False, init=False)
     N_levels: list[float] = field(repr=False, init=False)
     diameters_subdivided : list[np.ndarray] = field(repr=False, init = False)
 
     #Number of cells and subcell width
     N_cells: list[int] = field(repr=False, init=False)
     L_cells: float = field(repr=False, init=False)
+
+    # Sorting indeces
+    sort_inds : np.ndarray = field(repr=False, init=False)
 
     def __post_init__(self):
         """Initializes class variables keeping track of particles by level, etc."""
@@ -291,14 +281,18 @@ class CoordinatesGeneratorParallell:
         self.N_cells = int(self.box_width_subs/self.r)
         self.L_cells = self.box_width_subs/self.N_cells
 
-
         # Divide particles into equal volumes
         choose_inds = np.random.randint(low = 0, high = self.tot_no_subs, size = np.size(self.diameters),  dtype = int)
         diameters_subdivided = []
         for i in range(self.tot_no_subs):
             # Assign diameters from indeces
-            diameters_subdivided.append(self.diameters[choose_inds == i])
+            diam_temp = self.diameters[choose_inds == i]
+            diameters_subdivided.append(diam_temp)
 
+        diams_unsorted = np.concatenate(diameters_subdivided)
+        sort_inds = np.argsort(diams_unsorted)
+        self.sort_inds = sort_inds[::-1]
+        
         self.diameters_subdivided = diameters_subdivided
 
     def _CoordinateGen_(self, diameters: np.ndarray):
@@ -476,15 +470,20 @@ class CoordinatesGeneratorParallell:
         Nelems = [np.shape(coords)[0] for coords in coords_raw_list]
         shift = np.zeros((sum(Nelems), 3), dtype=float)
         ind = 0
+        # I : X , J : Y,  K : Z
         for i in range(self.Ndivs):
             for j in range(self.Ndivs):
                 for k in range(self.Ndivs):
-                    shift[ind:ind+Nelems[i+j+k], 0] = self.box_width_subs*i
-                    shift[ind:ind+Nelems[i+j+k], 1] = self.box_width_subs*j
-                    shift[ind:ind+Nelems[i+j+k], 2] = self.box_width_subs*k
-                    ind += Nelems[i+self.Ndivs(j + self.Ndivs*k)]
+                    no_elem = Nelems[i+self.Ndivs*(j + self.Ndivs*k)]
+                    shift[ind:ind+no_elem, 0] = self.box_width_subs*i
+                    shift[ind:ind+no_elem, 1] = self.box_width_subs*j
+                    shift[ind:ind+no_elem, 2] = self.box_width_subs*k
 
-        coordinates = np.concatenate(coords_raw_list) + shift        
+                    ind += no_elem
+        
+
+        coordinates = np.concatenate(coords_raw_list) + shift    
+        coordinates = coordinates[self.sort_inds]    
         return coordinates
 
     def _check_diameters(self):
