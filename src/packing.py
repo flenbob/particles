@@ -2,7 +2,7 @@ import math
 from dataclasses import dataclass, field
 from itertools import chain
 from pathlib import Path
-
+from multiprocessing import Pool
 import numpy as np
 from ovito.io import import_file
 
@@ -83,7 +83,6 @@ class CoordinatesGenerator:
         # Incrementally add the particles
         k = 0
         for i, N_level in enumerate(self.N_levels):
-            print(f'Coordinates of {N_level} particles from collection interval {i+1}/{len(self.N_levels)}...')
             # i is the CI that we're picking particles from
             for j in range(N_level):
                 # j denotes the particle id in CI[i]
@@ -237,6 +236,270 @@ class CoordinatesGenerator:
         #assert np.array_equal(self.collection_intervals, np.sort(self.collection_intervals)[::-1]), f'Collection intervals must be sorted descending to generate coordinates correctly.'
         assert max(self.collection_intervals) - np.max(self.diameters) < 1e-1, f'Upper collection interval does not correspond to largest particle diameter.'
         assert min(self.collection_intervals) > np.min(self.diameters), f'Lower collection interval is smaller than smallest particle diameter.'
+
+
+@dataclass
+class CoordinatesGeneratorParallell:
+    """Samples coordinates of non-overlapping particles inside a cell using multigrid method, work being distributed."""
+
+    # Fields that aren't thread specific
+    Ndivs = 4
+    diameters: np.ndarray
+    collection_intervals: list[float]
+    r: int = field(default=5, repr=False)
+    initial_volume_fraction: float = 0.05
+    box_width: float = field(default_factory=float, init=False)
+    box_width_subs: float = field(default_factory=float, init=False)
+    no_subs : int =  field(default=Ndivs, repr=False) 
+    tot_no_subs : int = field(default=Ndivs**3, repr=False)
+
+    #Cell container in for each axis
+    CellGrid = list[list[list[int]]]
+    xcells_levels: CellGrid = field(repr=False, init=False)
+    ycells_levels: CellGrid = field(repr=False, init=False)
+    zcells_levels: CellGrid = field(repr=False, init=False)
+
+    #Particle coordinate container for each axis and level and subs
+    AxisLevel = list[list[float]]
+    xcoords_levels: AxisLevel = field(repr=False, init=False)
+    ycoords_levels: AxisLevel = field(repr=False, init=False)
+    zcoords_levels: AxisLevel = field(repr=False, init=False)
+
+    #Particle diameters and number of particles per level
+    diameters_levels: AxisLevel = field(repr=False, init=False)
+    N_levels: list[float] = field(repr=False, init=False)
+    diameters_subdivided : list[np.ndarray] = field(repr=False, init = False)
+
+    #Number of cells and subcell width
+    N_cells: list[int] = field(repr=False, init=False)
+    L_cells: float = field(repr=False, init=False)
+
+    def __post_init__(self):
+        """Initializes class variables keeping track of particles by level, etc."""
+        #Checks
+        self._check_collection_intervals()
+        self._check_diameters()
+
+        self.diameters = self.diameters
+        self.collection_intervals = self.collection_intervals
+
+        #Calculate (orthogonal) box width given initial volume fraction
+        self.box_width = (np.pi/(6*self.initial_volume_fraction)*np.sum(self.diameters**3))**(1/3)
+        self.box_width_subs = self.box_width/self.no_subs
+
+        #Divide simulation cell into N_cells using some parameter r
+        self.N_cells = int(self.box_width_subs/self.r)
+        self.L_cells = self.box_width_subs/self.N_cells
+
+
+        # Divide particles into equal volumes
+        choose_inds = np.random.randint(low = 0, high = self.tot_no_subs, size = np.size(self.diameters),  dtype = int)
+        diameters_subdivided = []
+        for i in range(self.tot_no_subs):
+            # Assign diameters from indeces
+            diameters_subdivided.append(self.diameters[choose_inds == i])
+
+        self.diameters_subdivided = diameters_subdivided
+
+    def _CoordinateGen_(self, diameters: np.ndarray):
+
+    
+        def _order_particles_by_level() -> list[tuple[int, int]]:
+            """Order particles so indicies i_j indicate the largest index such that diams[i_j] <= CI_j
+            """
+            N = diameters.shape[0]
+            inds = []
+            for collection_interval in self.collection_intervals:
+                i = 0
+                while True:
+                    if(diameters[i] <= collection_interval or i == N-1):
+                        inds.append(i)
+                        break
+                    i += 1
+            inds.append(N)
+            id_tuples = [(inds[i-1], j) for i, j in enumerate(inds) if i > 0]
+            return id_tuples
+
+        def generate_coordinates() -> np.ndarray:
+
+            def _insert_cell(c: np.ndarray, i_: int, j: int) -> None:
+                """Inserts the index j in the correct cell
+
+                Args:
+                    c (np.ndarray): Center coordinate of the current particle
+                    i_ (int): The index of the CI (collection interval)
+                    j (int): The ID of the particle 
+                """
+
+                x_no = min(int(math.floor(c[0]/self.L_cells)), self.N_cells - 1)   
+                y_no = min(int(math.floor(c[1]/self.L_cells)), self.N_cells - 1)
+                z_no = min(int(math.floor(c[2]/self.L_cells)), self.N_cells - 1)
+
+                xcells_levels[i_][x_no].append(j)
+                ycells_levels[i_][y_no].append(j)
+                zcells_levels[i_][z_no].append(j)
+                
+                xcoords_levels[i_].append(c[0])
+                ycoords_levels[i_].append(c[1])
+                zcoords_levels[i_].append(c[2])
+                return 
+
+            def _overlap_cc(c: np.ndarray, ids: list, d_: float, i_: int) -> bool:
+                """Checks overlap by comparing squared euclidean distances
+
+                Args:
+                    c (np.ndarray): Center coordinate of the current particle
+                    ids (list): Particle IDs to check
+                    d_ (float): Cutoff distance for overlap check
+                    i_ (int): The index of the CI (collection interval)
+
+                Returns:
+                    bool: True if overlap, else False
+                """
+                for id in ids:
+                    D = diameters_levels[i_][id]
+                    euclidean = (c[0] - xcoords_levels[i_][id])**2+\
+                                (c[1] - ycoords_levels[i_][id])**2+\
+                                (c[2] - zcoords_levels[i_][id])**2
+                    
+                    if((D+d_)**2 > euclidean):
+                        return True
+                return False
+                            
+            def _subdomain_cc(d_: float, c: np.ndarray, i: int) -> bool:
+                '''
+                Returns the idxs in the CI searched within the ranges specified by c and diff
+                    Parameters:
+                            diff       : (float)   cutoff distance for overlap check
+                            c          : (np.ndarray) center coordinate of the current particle
+                            i          : (int)     the index of the CI 
+                    Returns:
+                            idxs       : (list)    of indicies in coords[i] where collisions may occur
+                '''
+                # Get the lists to run CC against:
+                for k in range(i + 1):
+                    # Retrieve contact detection lists
+                    if len(diameters_levels[k])==0:
+                        continue
+
+                    diff = (d_ + diameters_levels[k][0])/2
+
+                    x_hi = min(int(math.ceil((c[0] + diff)/self.L_cells)), 
+                            self.N_cells)     
+                    x_lo = int(math.floor((c[0]-diff)/self.L_cells)) - 1              
+
+                    y_hi = min(int(math.ceil((c[1] + diff)/self.L_cells)), 
+                            self.N_cells)
+                    y_lo = int(math.floor((c[1]-diff)/self.L_cells)) - 1
+
+                    z_hi = min(int(math.ceil((c[2] + diff)/self.L_cells)), 
+                            self.N_cells)  
+                    z_lo = int(math.floor((c[2]-diff)/self.L_cells)) - 1
+
+                    x_l = [xcells_levels[k][s] for s in range(x_lo, x_hi)]
+                    y_l = [ycells_levels[k][s] for s in range(y_lo, y_hi)]
+                    z_l = [zcells_levels[k][s] for s in range(z_lo, z_hi)]
+
+                    x_lf = list(chain.from_iterable(x_l))
+                    y_lf = list(chain.from_iterable(y_l))
+                    z_lf = list(chain.from_iterable(z_l))
+
+                    xyz = list(set(x_lf).intersection(y_lf, z_lf))
+                    if not xyz:
+                        continue
+
+                    if(_overlap_cc(c, xyz, d_, k)):
+                        return True
+                return False
+
+
+            # Using the cell list we want to be able to get coords and diameters
+            # |----|----|-----|-----|      # r = 4 : L = B/r
+            #      0    1     2     3  
+            # No of cells equals r
+
+            # Incrementally add the particles
+            k = 0
+            for i, N_level in enumerate(N_levels):
+                # i is the CI that we're picking particles from
+                for j in range(N_level):
+                    # j denotes the particle id in CI[i]
+                    d = diameters_levels[i][j]
+                    while True:
+                        # Box ranges from [0, box_size]; sample uniformly in [d/2, bl-d/2] 
+                        c = np.random.uniform(low = d/2, high = self.box_width_subs-d/2, size = (3,))
+
+                        if(_subdomain_cc(d, c, i) is False):
+                            break
+                        # Find where to insert idx
+                    _insert_cell(c, i, j)
+                    k += 1
+            
+            #Flatten coordinates for each axis over all subcells and write to NumPy array
+            x_c = list(chain(*xcoords_levels))
+            y_c = list(chain(*ycoords_levels))
+            z_c = list(chain(*zcoords_levels))
+            coordinates = (np.row_stack((np.array(x_c), np.array(y_c), np.array(z_c)))).T
+            return coordinates
+
+            
+
+        #Arrange particles by levels corresponding to provided collection intervals
+        id_levels = _order_particles_by_level()
+
+        #Initialize particle coordinate containers for each level
+        xcoords_levels = [[] for _ in id_levels]
+        ycoords_levels = [[] for _ in id_levels]
+        zcoords_levels = [[] for _ in id_levels]
+
+        #Initialize coordinate to subcell containers
+        xcells_levels = [[[] for _ in range(self.N_cells)] for _ in id_levels]       
+        ycells_levels = [[[] for _ in range(self.N_cells)] for _ in id_levels]
+        zcells_levels = [[[] for _ in range(self.N_cells)] for _ in id_levels]
+
+        #Initialize particle diameter container
+        diameters_levels = [[diameters[j] for j in range(lo, hi)] for (lo, hi) in id_levels]
+        N_levels = [hi-lo for (lo, hi) in id_levels]
+
+        # Generate the particles 
+        coords = generate_coordinates()
+        return coords
+
+    def generate_coordinates(self) -> np.ndarray:
+        # Assign the particles to a subdivided volume and core, shift returned coordinates and concatenate
+
+        # Gather the raw coordinates
+        with Pool(16) as pool:
+            coords_raw_list = pool.map(self._CoordinateGen_, self.diameters_subdivided)
+        
+        # Shift the coordinates by the required amount
+        Nelems = [np.shape(coords)[0] for coords in coords_raw_list]
+        shift = np.zeros((sum(Nelems), 3), dtype=float)
+        ind = 0
+        for i in range(self.Ndivs):
+            for j in range(self.Ndivs):
+                for k in range(self.Ndivs):
+                    shift[ind:ind+Nelems[i+j+k], 0] = self.box_width_subs*i
+                    shift[ind:ind+Nelems[i+j+k], 1] = self.box_width_subs*j
+                    shift[ind:ind+Nelems[i+j+k], 2] = self.box_width_subs*k
+
+        coordinates = np.concatenate(coords_raw_list) + shift        
+        return coordinates
+
+    def _check_diameters(self):
+        """Checks that diameters are sorted descending"""
+        self.diameters = np.sort(self.diameters)[::-1]
+        #assert np.array_equal(self.diameters, np.sort(self.diameters)[::-1]), f'Diameters must be sorted descending to generate coordinates correctly.'
+    
+    def _check_collection_intervals(self):
+        """Checks that collection intervals are ordered descending and are within diameter range"""
+        #Sort descending
+        self.collection_intervals = np.sort(self.collection_intervals)[::-1]
+
+        #assert np.array_equal(self.collection_intervals, np.sort(self.collection_intervals)[::-1]), f'Collection intervals must be sorted descending to generate coordinates correctly.'
+        assert max(self.collection_intervals) - np.max(self.diameters) < 1e-1, f'Upper collection interval does not correspond to largest particle diameter.'
+        assert min(self.collection_intervals) > np.min(self.diameters), f'Lower collection interval is smaller than smallest particle diameter.'
+
 
 @dataclass
 class CollectionIntervalGenerator:
