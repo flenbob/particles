@@ -859,7 +859,7 @@ class CellGrid:
         self.n_cells = [math.floor(self.width_box/h_val) for h_val in self.level_values]
         self.width_cells = [self.width_box/n_cells_h for n_cells_h in self.n_cells]
         
-        #List of tuples of directions to access cell all 27 cell neighbors (including its own)
+        #List of tuples of directions to access all 27 cell neighbors (including its own)
         self.ns = [n for n in product([0, 1, -1], repeat=3)]
         
     def map_to_cell(self, coord: np.ndarray, h: int) -> tuple:
@@ -883,11 +883,11 @@ class CellGrid:
         for h in self.levels:
             c = self.map_to_cell(coord, h)
             for n in self.ns:
-                #Neighboring cell
+                #Neighboring cell for each of the 27 directions
                 c_neigh = (c[0] + n[0], 
-                            c[1] + n[1], 
-                            c[2] + n[2],
-                            c[-1])
+                           c[1] + n[1], 
+                           c[2] + n[2],
+                           c[-1])
                 
                 #Neighboring particle identifier
                 if self.cell_grid.get(c_neigh) is not None:
@@ -917,10 +917,10 @@ class CellGrid:
             while True:
                 #Random coordinate
                 coord = np.random.uniform(low = diam/2, 
-                                    high = self.width_box - diam/2, 
-                                    size = (3,))
+                                          high = self.width_box - diam/2, 
+                                          size = (3,))
                 
-                #Check neighbors
+                #Particle ids of neighbors
                 p_neighs = self.get_neighs(coord)
                 
                 #If no neighbors then insert to cell and sample new coord
@@ -931,7 +931,7 @@ class CellGrid:
                     self.coordinates[p] = coord
                     break
                 
-                #Otherwise check contacts
+                # Otherwise check contacts and insert if none are found
                 if not self.check_contacts(diam, coord, p_neighs):
                     #Insert cell and store coordinate
                     c = self.map_to_cell(coord, h)
