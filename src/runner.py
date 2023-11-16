@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
-import h5py
+import numpy as np
 
 from .datawriter import DataWriter
 from .filename import FileName
@@ -52,7 +52,8 @@ class Runner:
         packing.write_packing(self.folder_path)
 
         #Convert collection intervals to LAMMPS readable format
-        collection_intervals = [len(packing.collection_intervals)] + packing.collection_intervals[::-1]
+        packing.collection_intervals = list(np.sort(packing.collection_intervals)) #Sort ascending
+        collection_intervals = [len(packing.collection_intervals)] + packing.collection_intervals
         collection_intervals = " ".join(str(item) for item in collection_intervals)
 
         #Initialize LAMMPS simulation
@@ -83,7 +84,7 @@ class Runner:
 
         #Load packing to generate collection intervals
         packing = Packing()
-        packing.load_packing(packing_path/FileName.INPUT_FILE.value)
+        packing.load_packing(packing_path/FileName.INPUT_FILE)
         collection_intervals = [len(packing.collection_intervals)] + packing.collection_intervals
         collection_intervals[-1] += 1e-3 #Ensure last interval contains largest particle
         collection_intervals = " ".join(str(item) for item in collection_intervals)
