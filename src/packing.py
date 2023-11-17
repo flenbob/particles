@@ -14,35 +14,33 @@ from .particles import Particles
 
 @dataclass
 class CoordinatesGenerator:
+    """Generates initial coordinates of a polydisperse packing"""
     diameters: np.ndarray
-    level_values: np.ndarray
+    collection_intervals: np.ndarray
     levels: np.ndarray = None
     coordinates: np.ndarray = None
     width_box: float = None
-    p: list = None
     h_diams: np.ndarray = None
     cell_grid: dict = field(default_factory=dict)
     ns: list = field(default_factory=list)
+    sort_order: np.ndarray = None
     
     def __post_init__(self):
         #Initialize empty Nx3 array of coordinates
-        N = len(self.diameters)
-        self.coordinates = np.zeros((N, 3))
+        self.coordinates = np.zeros((self.diameters.shape[0], 3))
         
-        #Sort diameters descending
-        self.diameters = -np.sort(-self.diameters)
+        #Sort diameters and collection intervals descending
+        self.sort_order = np.argsort(-self.diameters)
+        self.diameters = self.diameters[self.sort_order]
+        self.collection_intervals = -np.sort(-self.collection_intervals)
         
-        #Sort level values descending
-        self.level_values = -np.sort(-self.level_values)
-        
-        #Level list of equal size as diameter
-        self.h_diams = np.argmax(self.diameters[:, None] > np.concatenate((self.level_values, [0])), axis=1)-1
+        #Corresponding level (collection interval) for each diameter
+        self.h_diams = np.argmax(self.diameters[:, None] > \
+                                 np.concatenate((self.collection_intervals, [0])), 
+                                 axis = 1) - 1
         
         #Level identifiers
         self.levels = np.unique(self.h_diams)
-        
-        #Particle identifiers as values inside grid
-        self.p = list(range(0, self.diameters.shape[0]))
         
         #Set box width
         volume_fraction = 0.05
@@ -51,13 +49,13 @@ class CoordinatesGenerator:
         self.width_box = volume_box**(1/3)
         
         #Construct hierarchy of levels and cells
-        self.n_cells = [math.floor(self.width_box/h_val) for h_val in self.level_values]
+        self.n_cells = [math.floor(self.width_box/ci) for ci in self.collection_intervals]
         self.width_cells = [self.width_box/n_cells_h for n_cells_h in self.n_cells]
         
         #List of tuples of directions to access all 27 cell neighbors (including its own)
         self.ns = [n for n in product([0, 1, -1], repeat=3)]
         
-    def map_to_cell(self, coord: np.ndarray, h: int) -> tuple:
+    def _map_to_cell(self, coord: np.ndarray, h: int) -> tuple:
         """Maps input coordinate and hierarchy level to cell"""
         c = (math.floor(coord[0]/self.width_cells[h]), 
              math.floor(coord[1]/self.width_cells[h]), 
@@ -65,33 +63,34 @@ class CoordinatesGenerator:
              h)
         return c
     
-    def insert_cell(self, p: int, c: tuple) -> None:
+    def _insert_cell(self, p: int, c: tuple) -> None:
         """Inserts particle id (p) into cell grid at cell (c)"""
         if not self.cell_grid.get(c):
             self.cell_grid.update({c: [p]})
         else:
             self.cell_grid[c].append(p)
             
-    def get_neighs(self, coord) -> list[int]:
-        """Get neighboring cells of a coordinate in all levels"""
+    def _get_neighs(self, coord) -> list[int]:
+        """Get particle identifiers in neighboring cells of a coordinate in all levels"""
         p_neighs = []
         for h in self.levels:
-            c = self.map_to_cell(coord, h)
+            c = self._map_to_cell(coord, h) #Cell of coordinate at h:th level
             for n in self.ns:
                 #Neighboring cell for each of the 27 directions
                 c_neigh = (c[0] + n[0], 
                            c[1] + n[1], 
                            c[2] + n[2],
-                           c[-1])
+                           c[3])
                 
                 #Neighboring particle identifier
-                if self.cell_grid.get(c_neigh) is not None:
-                    p_neighs.append(self.cell_grid.get(c_neigh))
+                p = self.cell_grid.get(c_neigh) 
+                if p is not None:
+                    p_neighs.append(p)
                     
-        #Return flattened list of particle identifiers
+        #Flattened list of particle identifiers
         return list(chain.from_iterable(p_neighs))
     
-    def check_contacts(self, diam: float, coord: np.ndarray, p_neighs: list[int]) -> bool:
+    def _check_contacts(self, diam: float, coord: np.ndarray, p_neighs: list[int]) -> bool:
         """Check if particle (p) with coordinate (coord) is in contact with
             any of the neighboring particles (p_neighs) 
         """
@@ -107,8 +106,9 @@ class CoordinatesGenerator:
                     return True
         return False
         
-    def generate_coordinates(self) -> None:
-        for p, h, diam in zip(self.p, self.h_diams, self.diameters):
+    def generate_coordinates(self) -> np.ndarray:
+        """Generates non-overlapping coordinates"""
+        for p, (h, diam) in enumerate(zip(self.h_diams, self.diameters)):
             while True:
                 #Random coordinate
                 coord = np.random.uniform(low = diam/2, 
@@ -116,25 +116,24 @@ class CoordinatesGenerator:
                                           size = (3,))
                 
                 #Particle ids of neighbors
-                p_neighs = self.get_neighs(coord)
+                p_neighs = self._get_neighs(coord)
                 
-                #If no neighbors then insert to cell and sample new coord
+                #If no neighbors then insert to cellgrid and sample new coord
                 if len(p_neighs) == 0:
-                    #Insert cell and store coordinate
-                    c = self.map_to_cell(coord, h)
-                    self.insert_cell(p, c)
+                    c = self._map_to_cell(coord, h)
+                    self._insert_cell(p, c)
                     self.coordinates[p] = coord
                     break
                 
                 # Otherwise check contacts and insert if none are found
-                if not self.check_contacts(diam, coord, p_neighs):
-                    #Insert cell and store coordinate
-                    c = self.map_to_cell(coord, h)
-                    self.insert_cell(p, c)
+                if not self._check_contacts(diam, coord, p_neighs):
+                    c = self._map_to_cell(coord, h)
+                    self._insert_cell(p, c)
                     self.coordinates[p] = coord
                     break
                 
-        return self.coordinates
+        #Sort in same order as input diameters to avoid accidental mismatch
+        return self.coordinates[self.sort_order]
 
 
 @dataclass
@@ -389,10 +388,6 @@ class Packing:
 
         #Generate collection intervals
         self.collection_intervals = CollectionIntervalGenerator(self.particles.diameters).generate_collection_intervals()
-        
-        #Switch order in packing
-        self.collection_intervals = self.collection_intervals[::-1]
-        self.particles.sort_by_diameters(order='descending')
 
         #Generate particle coordinates        
         self.particles.coordinates = CoordinatesGenerator(self.particles.diameters,

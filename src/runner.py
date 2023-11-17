@@ -8,8 +8,6 @@ import numpy as np
 from .datawriter import DataWriter
 from .filename import FileName
 from .packing import Packing
-from .keyname import FrameKey, CommonKey
-
 
 class LAMMPSScript(str, Enum):
     """Names of selectable LAMMPS scripts"""
