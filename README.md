@@ -60,4 +60,6 @@ If facing issues with OVITO Python interface dependencies (e.g. Qt plugin), try:
 
       sudo apt-get install libgl-dev libglfw3-dev libxkbcommon-x11-0
 
+If you get the error "QWidget: Cannot create a QWidget without QApplication", see [Compatibility issue between python-ovito library and matplotlib](https://matsci.org/t/compatibility-issue-between-python-ovito-library-and-matplotlib/50794/1).
+
 Packing can be visualized using OVITO, see [Install OVITO](https://www.ovito.org/manual/installation.html). Within the software, load the global dumpfile, e.g. ```./simulations/data/ID/out_global.txt``` for a given simulation ```ID```.
